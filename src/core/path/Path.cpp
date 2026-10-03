@@ -104,6 +104,20 @@ double Path::curvatureAt(double s, double span) const {
     return curvatureFromPoints(positionAt(s0), positionAt(s1), positionAt(s2));
 }
 
+Path Path::trimmed(double from, double to) const {
+    Path out;
+    if (points_.size() < 2) return *this;
+    from = std::max(0.0, from);
+    to = std::min(length(), to);
+    if (to <= from) return out;
+    out.append(positionAt(from), points_[segmentIndexAt(from)].speedLimit, points_[segmentIndexAt(from)].segmentId);
+    for (const auto& p : points_) {
+        if (p.s > from && p.s < to) out.append(p.pos, p.speedLimit, p.segmentId);
+    }
+    out.append(positionAt(to), points_[segmentIndexAt(to)].speedLimit, points_[segmentIndexAt(to)].segmentId);
+    return out;
+}
+
 Path Path::resampled(double spacing) const {
     Path out;
     if (!valid() || spacing <= 0.0) return *this;

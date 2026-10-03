@@ -1,7 +1,10 @@
 #include <chrono>
 #include <cstdio>
 #include <fstream>
+#include <algorithm>
 #include <iostream>
+#include <map>
+#include <vector>
 #include <string>
 
 #include "map/MapBuilder.h"
@@ -47,6 +50,25 @@ int build(int argc, char** argv) {
     std::printf("\nunconnected road ends %zu, nearest prefab start (0.25 m buckets):", st.roadEndsUnconnected);
     for (auto v : st.missGapHistogram) std::printf(" %zu", v);
     std::printf("\n");
+    {
+        struct Agg { int n = 0; double lat = 0.0; double lon = 0.0; int laneCount = 0; };
+        std::map<std::string, Agg> agg;
+        for (const auto& g : st.gapSamples) {
+            const std::string key = g.look + (g.left ? " L" : " R") + std::to_string(g.lane) + "/" +
+                                    std::to_string(g.laneCount) + (g.roadEndsIntoPrefab ? " road->prefab" : " prefab->road");
+            auto& a = agg[key];
+            ++a.n;
+            a.lat += g.lateral;
+            a.lon += g.longitudinal;
+        }
+        std::vector<std::pair<std::string, Agg>> v(agg.begin(), agg.end());
+        std::sort(v.begin(), v.end(), [](const auto& a, const auto& b) { return a.second.n > b.second.n; });
+        std::printf("largest gap groups (look side lane/count direction: n, mean lateral, mean longitudinal):\n");
+        for (std::size_t i = 0; i < v.size() && i < 25; ++i) {
+            std::printf("  %-40s n=%4d lat=%+.2f lon=%+.2f\n", v[i].first.c_str(), v[i].second.n,
+                        v[i].second.lat / v[i].second.n, v[i].second.lon / v[i].second.n);
+        }
+    }
     for (const auto& e : st.errors) std::printf("error: %s\n", e.c_str());
     if (!net) return 1;
     if (!net->save(cache, mapFingerprint(o))) {

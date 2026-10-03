@@ -5,6 +5,7 @@
 //   atspilot_sim                       run all scenarios
 //   atspilot_sim --config file.toml    use a specific configuration
 //   atspilot_sim --csv out_dir         write one CSV per scenario
+//   atspilot_sim --write-default-config file.toml
 
 #include <cstdio>
 #include <filesystem>
@@ -33,6 +34,9 @@ int main(int argc, char** argv) {
             const ConfigLoadResult r = loadConfig(ss.str());
             for (const auto& w : r.warnings) std::cerr << "config: " << w << "\n";
             cfg = r.config;
+        } else if (a == "--write-default-config" && i + 1 < argc) {
+            std::ofstream(argv[++i]) << defaultConfigText();
+            return 0;
         } else if (a == "--csv" && i + 1 < argc) {
             csvDir = argv[++i];
             std::filesystem::create_directories(csvDir);

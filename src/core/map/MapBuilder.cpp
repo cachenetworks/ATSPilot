@@ -488,6 +488,8 @@ std::optional<RoadNetwork> buildRoadNetwork(const MapBuildOptions& options, MapB
     // --- Connections between items ----------------------------------------------
     report(options, 0.9, "Connecting lanes");
     auto& segs = net.mutableSegments();
+    std::unordered_map<std::uint64_t, const MapRoad*> roadByUid;
+    for (const auto& r : roads) roadByUid[r.uid] = &r;
     EndpointIndex starts(4.0);
     for (std::uint32_t id = 0; id < segs.size(); ++id) {
         if (segs[id].points.size() >= 2) starts.add(segs[id].points.front().plan(), id);
@@ -511,6 +513,25 @@ std::optional<RoadNetwork> buildRoadNetwork(const MapBuildOptions& options, MapB
                 stats.roadPrefabGapSum += gap;
                 ++stats.roadPrefabJoins;
                 ++stats.joinGapHistogram[std::min<std::size_t>(31, static_cast<std::size_t>(gap / 0.25))];
+                if (gap > 0.75 && stats.gapSamples.size() < 5000) {
+                    const bool roadFirst = seg.kind == LaneKind::Road;
+                    const LaneSegment& road = roadFirst ? seg : segs[other];
+                    const auto rit = roadByUid.find(road.itemUid);
+                    if (rit != roadByUid.end()) {
+                        MapBuildStats::GapSample g;
+                        g.look = tokenToString(rit->second->roadLook);
+                        g.left = road.leftSide;
+                        g.lane = road.laneIndex;
+                        const auto lk = looks.find(rit->second->roadLook);
+                        g.laneCount = lk == looks.end() ? 0 : (road.leftSide ? lk->second.lanesLeft : lk->second.lanesRight);
+                        const Vec2 dir = coords::yawToDirection(endYaw);
+                        const Vec2 d = segs[other].points.front().plan() - end;
+                        g.lateral = dot(d, Vec2{dir.y, -dir.x});
+                        g.longitudinal = dot(d, dir);
+                        g.roadEndsIntoPrefab = roadFirst;
+                        stats.gapSamples.push_back(g);
+                    }
+                }
             }
         });
         if (connected) {

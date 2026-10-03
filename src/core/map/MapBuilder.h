@@ -47,6 +47,16 @@ struct MapBuildStats {
     std::vector<std::size_t> missGapHistogram = std::vector<std::size_t>(32, 0);
     std::size_t roadEndsUnconnected = 0;
     std::size_t lookSidesCalibrated = 0;
+    struct GapSample {
+        std::string look;
+        bool left = false;
+        int lane = 0;
+        int laneCount = 0;
+        double lateral = 0.0;       // prefab point relative to road lane end, + = right of travel
+        double longitudinal = 0.0;
+        bool roadEndsIntoPrefab = true;
+    };
+    std::vector<GapSample> gapSamples;  // road<->prefab joins with gap > 0.75 m (first 5000)
     std::vector<std::string> errors;  // first few, for logging
 };
 

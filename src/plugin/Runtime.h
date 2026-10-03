@@ -68,6 +68,12 @@ public:
     void setInputDeviceActive(bool active);
     OutputValues currentOutput();
 
+    // Requests from outside the frame loop (development harness); applied on the next frame.
+    void queueRequest(PilotRequest r);
+    PilotMode mode() const { return pilot_ ? pilot_->mode() : PilotMode::Off; }
+    std::string statusMessage() const { return pilot_ ? pilot_->status().statusMessage : std::string(); }
+    MapState mapState() const { return map_ ? map_->state() : MapState::Disabled; }
+
     Logger& log() { return log_; }
     const Config& config() const { return config_; }
     void flushGameLog();
@@ -79,6 +85,7 @@ private:
     void initialise();
     void loadConfiguration();
     void pollHotkeys();
+    void processRequest(PilotRequest r);
     void handleEvent(PilotEvent e, const std::string& msg);
     void publishStatus();
     void workerLoop();
@@ -117,6 +124,8 @@ private:
         bool wasDown = false;
     };
     std::vector<Hotkey> hotkeys_;
+    std::mutex requestMutex_;
+    std::vector<PilotRequest> queuedRequests_;
 
     // Status / audio worker.
     std::thread worker_;

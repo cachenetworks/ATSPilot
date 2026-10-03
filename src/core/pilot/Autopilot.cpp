@@ -290,9 +290,10 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
         in.speed = std::max(0.0, s.speed);
         in.wheelbase = vc.wheelbase;
 
-        std::optional<std::size_t> hint;
-        if (hintPath_ == path) hint = hintIndex_;
-        else hint = std::size_t{0};
+        // Same snapshot: continue from the last projection. New snapshot: start from
+        // where the planner placed the truck when it built the path.
+        std::optional<std::size_t> hint =
+            hintPath_ == path ? hintIndex_ : path->path.segmentIndexAt(path->truckS);
         LateralOutput out = computeLateral(cfg_.steering.lateral, path->path, in, hint);
         if (out.valid && std::abs(out.crossTrackError) > cfg_.safety.maxCrossTrack && hint) {
             // The windowed search may have locked onto the wrong stretch; retry globally.

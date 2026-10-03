@@ -175,8 +175,12 @@ PlannedPath buildPlannedPath(const RoadNetwork& net, const LaneMatch& start, con
     for (auto id : out.chain) {
         for (const auto& p : net.segment(id).points) raw.append(p.plan(), 0.0, id);
     }
-    out.path = raw.resampled(params.spacing);
-    out.truckS = sBeforeStart + start.s;
+    // Keep only `behind` metres before the truck so the truck sits near the start of
+    // the path, where the controller's windowed projection begins searching.
+    const double truckS = sBeforeStart + start.s;
+    const double from = std::max(0.0, truckS - params.behind);
+    out.path = raw.trimmed(from, raw.length()).resampled(params.spacing);
+    out.truckS = truckS - from;
     return out;
 }
 

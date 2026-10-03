@@ -201,6 +201,7 @@ void MapService::planOnce() {
     auto snap = std::make_shared<PathSnapshot>();
     snap->path = std::move(planned.path);
     snap->time = s.time;
+    snap->truckS = planned.truckS;
     snap->roadName = net_->segment(loc.match.segment).kind == LaneKind::Road ? "Road" : "Junction";
     snap->nextManeuver = planned.nextManeuver;
     snap->nextManeuverDistance = planned.nextManeuverDistance;

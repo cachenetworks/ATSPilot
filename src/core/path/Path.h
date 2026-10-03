@@ -52,10 +52,13 @@ public:
 
     // Resamples to roughly uniform spacing.
     Path resampled(double spacing) const;
+    // Sub-path covering arc lengths [from, to], re-based so it starts at s = 0.
+    Path trimmed(double from, double to) const;
 
-private:
+    // Index of the segment containing arc length s.
     std::size_t segmentIndexAt(double s) const;
 
+private:
     std::vector<PathPoint> points_;
 };
 

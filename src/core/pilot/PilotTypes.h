@@ -47,6 +47,7 @@ struct ControlCommand {
 struct PathSnapshot {
     Path path;
     double time = 0.0;              // simulation time of the vehicle state used to build it
+    double truckS = 0.0;            // truck's arc length on `path` when it was built
     std::string roadName;
     std::string nextManeuver;
     double nextManeuverDistance = 0.0;

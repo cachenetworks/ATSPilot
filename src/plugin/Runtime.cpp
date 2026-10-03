@@ -131,7 +131,13 @@ void Runtime::loadConfiguration() {
 }
 
 void Runtime::initialise() {
-    paths_.dataDir = documentsDir() / "American Truck Simulator" / "atspilot";
+    // ATSPILOT_DATA_DIR redirects all files; used by the plugin host test harness.
+    wchar_t overrideDir[MAX_PATH] = {};
+    if (GetEnvironmentVariableW(L"ATSPILOT_DATA_DIR", overrideDir, MAX_PATH) > 0) {
+        paths_.dataDir = overrideDir;
+    } else {
+        paths_.dataDir = documentsDir() / "American Truck Simulator" / "atspilot";
+    }
     paths_.configFile = paths_.dataDir / "atspilot.toml";
     paths_.logFile = paths_.dataDir / "logs" / "atspilot.log";
     paths_.cacheDir = paths_.dataDir / "cache";
@@ -241,7 +247,25 @@ void Runtime::onFrameStart(double simulationTime, bool timerRestart) {
     if (timerRestart && pilot_ && pilot_->mode() != PilotMode::Off) pilot_->disengage("Timer restart");
 }
 
+void Runtime::queueRequest(PilotRequest r) {
+    std::lock_guard lock(requestMutex_);
+    queuedRequests_.push_back(r);
+}
+
+void Runtime::processRequest(PilotRequest r) {
+    double pathWall = -1e9;
+    const PathSnapshotPtr path = map_ ? map_->latestPath(&pathWall) : nullptr;
+    pilot_->request(r, current_, vehicleConfig_, path, wallNow(), pathWall);
+}
+
 void Runtime::pollHotkeys() {
+    std::vector<PilotRequest> queued;
+    {
+        std::lock_guard lock(requestMutex_);
+        queued.swap(queuedRequests_);
+    }
+    for (auto r : queued) processRequest(r);
+
     if (!gameHasFocus()) {
         for (auto& h : hotkeys_) h.wasDown = false;
         return;
@@ -251,10 +275,8 @@ void Runtime::pollHotkeys() {
         const bool down = keyDown(h.binding.virtualKey) && shift == h.binding.shift && ctrl == h.binding.ctrl &&
                           alt == h.binding.alt;
         if (down && !h.wasDown) {
-            double pathWall = -1e9;
-            const PathSnapshotPtr path = map_ ? map_->latestPath(&pathWall) : nullptr;
             log_.debug("Hotkey {} -> {}", toString(h.binding), toString(h.request));
-            pilot_->request(h.request, current_, vehicleConfig_, path, wallNow(), pathWall);
+            processRequest(h.request);
         }
         h.wasDown = down;
     }
