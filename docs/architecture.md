@@ -30,7 +30,9 @@ control algorithms know nothing about ATS versions.
  │ frame_end:                                            │   │  load cache / build map (once)    │
  │   VehicleState ──────────────── submitVehicle() ─────────▶│  every ~100 ms:                   │
  │   hotkeys ─▶ Autopilot::request()                      │   │   Localizer (lane match)          │
- │   Autopilot::update(state, latest PathSnapshot) ◀────────│   buildPlannedPath (rolling path)  │
+ │                                                       │   │   job destination ─▶ async A*     │
+ │                                                       │   │     route (recalc when off-route) │
+ │   Autopilot::update(state, latest PathSnapshot) ◀────────│   buildPlannedPath (route / road)  │
  │     safety ▶ lateral ▶ speed plan ▶ pedals ▶ command   │   │   publish shared_ptr<PathSnapshot>│
  │   recorder / status (queued to workers)               │   └──────────────────────────────────┘
  │ input device callback (next frame):                   │   Logger thread: file I/O, rotation

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "map/RoadNetwork.h"
+#include "map/RoutePlanner.h"
 #include "pilot/PilotTypes.h"
 
 namespace atspilot {
@@ -56,12 +57,15 @@ struct PlannedPath {
     double truckS = 0.0;               // arc length of the truck's projection on `path`
     std::string nextManeuver;
     double nextManeuverDistance = 0.0;
+    bool onRoute = false;          // path follows the navigation route
+    double routeRemaining = 0.0;   // m, when on route
 };
 
-// Builds the rolling driving path along the lane graph. Without a GPS route,
-// each branch point continues on the straightest successor ("follow the road"),
-// and keeps whatever choice the previous plan made so the path stays stable.
+// Builds the rolling driving path along the lane graph. With a route that
+// contains the truck's lane, the path follows the route (including lane
+// changes). Otherwise each branch continues on the straightest successor
+// ("follow the road") and keeps the previous plan's choice so the path is stable.
 PlannedPath buildPlannedPath(const RoadNetwork& net, const LaneMatch& start, const PathBuildParams& params,
-                             const std::vector<std::uint32_t>& previousChain);
+                             const std::vector<std::uint32_t>& previousChain, const Route* route = nullptr);
 
 }  // namespace atspilot

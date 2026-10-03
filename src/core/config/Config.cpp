@@ -98,6 +98,8 @@ ConfigLoadResult loadConfig(const std::string& text) {
         {"map", "lane_width_m", &c.map.laneWidth, 2.5, 6.0},
         {"map", "path_ahead_m", &c.map.pathAhead, 100.0, 3000.0},
         {"map", "max_localization_distance_m", &c.map.maxLocalizationDistance, 2.0, 50.0},
+        {"route", "lane_change_cost_m", &c.route.laneChangeCost, 5.0, 1000.0},
+        {"route", "recalculate_after_s", &c.route.recalcAfter, 0.2, 10.0},
         {"debug", "log_max_mb", &c.debug.logMaxMb, 0.1, 100.0},
         {"debug", "log_files", &logFiles, 1.0, 20.0},
         {"debug", "record_max_mb", &c.debug.recordMaxMb, 1.0, 2000.0},
@@ -108,6 +110,7 @@ ConfigLoadResult loadConfig(const std::string& text) {
         {"steering", "learn_steering_ratio", &c.steering.learnSteeringRatio},
         {"safety", "driver_override", &c.safety.driverOverride},
         {"map", "enabled", &c.map.enabled},
+        {"route", "enabled", &c.route.enabled},
         {"audio", "enabled", &c.audioEnabled},
         {"debug", "logging", &c.debug.logging},
         {"debug", "record_telemetry", &c.debug.recordTelemetry},
@@ -269,6 +272,11 @@ game_dir = ""               # empty = detect from the plugin location
 lane_width_m = 4.5
 path_ahead_m = 600
 max_localization_distance_m = 12
+
+[route]
+enabled = true              # follow a route to the job destination (otherwise follow the road)
+lane_change_cost_m = 60     # how strongly routing avoids lane changes
+recalculate_after_s = 1.0   # time off the route before recalculating
 
 [audio]
 enabled = true

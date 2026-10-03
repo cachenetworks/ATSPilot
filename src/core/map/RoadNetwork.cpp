@@ -20,8 +20,26 @@ std::uint32_t RoadNetwork::add(LaneSegment seg) {
     return static_cast<std::uint32_t>(segments_.size() - 1);
 }
 
+std::vector<std::uint32_t> RoadNetwork::laneNeighbors(std::uint32_t id) const {
+    std::vector<std::uint32_t> out;
+    const auto& seg = segments_[id];
+    if (seg.kind != LaneKind::Road) return out;
+    const auto it = roadLanes_.find(seg.itemUid);
+    if (it == roadLanes_.end()) return out;
+    for (auto other : it->second) {
+        const auto& o = segments_[other];
+        if (other == id || o.leftSide != seg.leftSide) continue;
+        if (o.laneIndex + 1 == seg.laneIndex || seg.laneIndex + 1 == o.laneIndex) out.push_back(other);
+    }
+    return out;
+}
+
 void RoadNetwork::finalize() {
     grid_.clear();
+    roadLanes_.clear();
+    for (std::uint32_t id = 0; id < segments_.size(); ++id) {
+        if (segments_[id].kind == LaneKind::Road) roadLanes_[segments_[id].itemUid].push_back(id);
+    }
     for (auto& s : segments_) {
         s.prev.clear();
         float len = 0.0f;
@@ -111,6 +129,13 @@ std::vector<LaneMatch> RoadNetwork::query(const Vec2& p, double radius) const {
     return out;
 }
 
+const Destination* RoadNetwork::findDestination(std::uint64_t city, std::uint64_t company) const {
+    for (const auto& d : destinations_) {
+        if (d.city == city && d.company == company) return &d;
+    }
+    return nullptr;
+}
+
 namespace {
 
 constexpr char kMagic[8] = {'A', 'T', 'S', 'P', 'M', 'A', 'P', '\0'};
@@ -150,6 +175,16 @@ bool RoadNetwork::save(const std::filesystem::path& file, const std::string& fin
             put(f, static_cast<std::uint32_t>(s.next.size()));
             f.write(reinterpret_cast<const char*>(s.next.data()),
                     static_cast<std::streamsize>(s.next.size() * sizeof(std::uint32_t)));
+        }
+        put(f, static_cast<std::uint32_t>(destinations_.size()));
+        for (const auto& d : destinations_) {
+            put(f, d.city);
+            put(f, d.company);
+            put(f, d.position.x);
+            put(f, d.position.y);
+            put(f, static_cast<std::uint32_t>(d.lanes.size()));
+            f.write(reinterpret_cast<const char*>(d.lanes.data()),
+                    static_cast<std::streamsize>(d.lanes.size() * sizeof(std::uint32_t)));
         }
         if (!f) return false;
     }
@@ -206,6 +241,31 @@ std::optional<RoadNetwork> RoadNetwork::load(const std::filesystem::path& file, 
             len += static_cast<float>(distance(s.points[i - 1].plan(), s.points[i].plan()));
         }
         s.length = len;
+    }
+    std::uint32_t destCount = 0;
+    if (!get(f, destCount) || destCount > 1000000) {
+        if (error) *error = "truncated cache";
+        return std::nullopt;
+    }
+    net.destinations_.resize(destCount);
+    for (auto& d : net.destinations_) {
+        std::uint32_t lanes = 0;
+        if (!get(f, d.city) || !get(f, d.company) || !get(f, d.position.x) || !get(f, d.position.y) ||
+            !get(f, lanes) || lanes > 100000) {
+            if (error) *error = "truncated cache";
+            return std::nullopt;
+        }
+        d.lanes.resize(lanes);
+        if (!f.read(reinterpret_cast<char*>(d.lanes.data()), static_cast<std::streamsize>(lanes * sizeof(std::uint32_t)))) {
+            if (error) *error = "truncated cache";
+            return std::nullopt;
+        }
+        for (auto l : d.lanes) {
+            if (l >= count) {
+                if (error) *error = "corrupt cache";
+                return std::nullopt;
+            }
+        }
     }
     for (const auto& s : net.segments_) {
         for (auto n : s.next) {

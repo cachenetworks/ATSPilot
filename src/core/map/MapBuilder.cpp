@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <memory>
 #include <sstream>
 #include <unordered_map>
@@ -253,6 +254,7 @@ std::optional<RoadNetwork> buildRoadNetwork(const MapBuildOptions& options, MapB
     std::unordered_map<std::uint64_t, MapNode> nodes;
     std::vector<MapRoad> roads;
     std::vector<MapPrefab> prefabs;
+    std::vector<MapCompany> companies;
     for (std::size_t i = 0; i < sectorFiles.size(); ++i) {
         if (cancelled(options)) return std::nullopt;
         if (i % 50 == 0) report(options, 0.05 + 0.6 * i / sectorFiles.size(), "Parsing map sectors");
@@ -267,6 +269,7 @@ std::optional<RoadNetwork> buildRoadNetwork(const MapBuildOptions& options, MapB
             for (auto& n : sector.nodes) nodes[n.uid] = n;
             roads.insert(roads.end(), sector.roads.begin(), sector.roads.end());
             for (auto& p : sector.prefabs) prefabs.push_back(std::move(p));
+            companies.insert(companies.end(), sector.companies.begin(), sector.companies.end());
             ++stats.sectors;
         } catch (const std::exception& e) {
             ++stats.sectorErrors;
@@ -335,6 +338,26 @@ std::optional<RoadNetwork> buildRoadNetwork(const MapBuildOptions& options, MapB
         for (std::size_t ci = 0; ci < desc->curves.size(); ++ci) {
             for (int n : desc->curves[ci].next) net.mutableSegments()[curveIds[ci]].next.push_back(curveIds[n]);
         }
+
+        // Placement check: every descriptor node must land on its map node.
+        // Descriptor node j corresponds to map node nodes[(j - originIndex) mod n].
+        const std::size_t n = prefab.nodes.size();
+        for (std::size_t j = 0; j < n; ++j) {
+            const auto mapNode = nodes.find(prefab.nodes[(j + n - prefab.originIndex) % n]);
+            if (mapNode == nodes.end()) continue;
+            ++stats.prefabNodeChecks;
+            const Vec3 placed = place(desc->nodes[j].position);
+            const double err = distance(coords::worldToPlan(placed), coords::worldToPlan(mapNode->second.position));
+            if (err > 1.0) {
+                ++stats.prefabNodeMismatches;
+                if (stats.prefabMismatchSamples.size() < 10) {
+                    stats.prefabMismatchSamples.push_back(tokenToString(prefab.model) + " node " + std::to_string(j) +
+                                                          "/" + std::to_string(n) + " origin " +
+                                                          std::to_string(prefab.originIndex) + " error " +
+                                                          std::to_string(err) + " m");
+                }
+            }
+        }
     }
 
     // --- Lane offset calibration -----------------------------------------------
@@ -356,6 +379,10 @@ std::optional<RoadNetwork> buildRoadNetwork(const MapBuildOptions& options, MapB
         std::vector<std::vector<float>> side[2];
     };
     std::unordered_map<std::uint64_t, LookSamples> samples;
+    // Development aid: ATSPILOT_DEBUG_LOOK=<token> records the raw measurements for one look.
+    const char* debugEnv = std::getenv("ATSPILOT_DEBUG_LOOK");
+    const std::uint64_t debugLook = debugEnv ? tokenFromString(debugEnv) : 0;
+    std::uint64_t currentLook = 0;
 
     auto measure = [&](const Vec2& centre, double roadYaw, bool atStart, bool leftSide, int laneCount,
                        std::vector<std::vector<float>>& out) {
@@ -372,18 +399,45 @@ std::optional<RoadNetwork> buildRoadNetwork(const MapBuildOptions& options, MapB
             if (std::abs(headingDifference(travelYaw, yaws[id])) > degToRad(20.0)) return;
             const Vec2 d = p - centre;
             if (std::abs(dot(d, along)) > 1.5) return;
-            const double m = (leftSide ? -1.0 : 1.0) * dot(d, right);
-            if (m > -0.5) mags.push_back(m);
+            // Signed offset towards this side's outer edge. It can be negative: on a
+            // one-way carriageway the node line is the carriageway centre, so the
+            // inner lane sits on the other side of it.
+            mags.push_back((leftSide ? -1.0 : 1.0) * dot(d, right));
         });
         std::sort(mags.begin(), mags.end());
         // Several curves (straight, turn) often start at the same lane point.
-        std::vector<double> lanes;
+        std::vector<double> points;
         for (double m : mags) {
-            if (lanes.empty() || m - lanes.back() > 0.6) lanes.push_back(m);
+            if (points.empty() || m - points.back() > 0.6) points.push_back(m);
         }
-        if (static_cast<int>(lanes.size()) != laneCount) return;
-        if (out.size() < lanes.size()) out.resize(lanes.size());
-        for (std::size_t i = 0; i < lanes.size(); ++i) out[i].push_back(static_cast<float>(lanes[i]));
+        // Find laneCount consecutive points with lane-like spacing. A road end is
+        // only used when exactly one such window exists; extra aligned points
+        // (ramps, parallel roads) make it ambiguous and it is skipped. Inner lanes
+        // may lie well across the node line (e.g. 3-lane carriageways at -6.75,
+        // -2.25, +2.25 m in ATS 1.61).
+        const auto n = static_cast<std::size_t>(laneCount);
+        std::size_t bestStart = points.size();
+        int windows = 0;
+        for (std::size_t s0 = 0; s0 + n <= points.size(); ++s0) {
+            bool spaced = true;
+            for (std::size_t k = 1; k < n; ++k) {
+                const double gap = points[s0 + k] - points[s0 + k - 1];
+                spaced = spaced && gap >= 2.5 && gap <= 6.0;
+            }
+            if (!spaced || points[s0] < -12.0 || points[s0 + n - 1] > 25.0) continue;
+            ++windows;
+            bestStart = s0;
+        }
+        if (windows != 1) bestStart = points.size();
+        if (debugLook != 0 && currentLook == debugLook && stats.calibrationDebug.size() < 30) {
+            std::string line = std::string(leftSide ? "L" : "R") + (atStart ? " start:" : " end:");
+            for (double p : points) line += " " + std::to_string(p).substr(0, 6);
+            line += bestStart == points.size() ? "  -> rejected" : "  -> window " + std::to_string(bestStart);
+            stats.calibrationDebug.push_back(line);
+        }
+        if (bestStart == points.size()) return;
+        if (out.size() < n) out.resize(n);
+        for (std::size_t i = 0; i < n; ++i) out[i].push_back(static_cast<float>(points[bestStart + i]));
     };
 
     for (const auto& road : roads) {
@@ -397,6 +451,7 @@ std::optional<RoadNetwork> buildRoadNetwork(const MapBuildOptions& options, MapB
         if (dot(d0, p1 - p0) < 0.0) d0 = -d0;
         if (dot(d1, p1 - p0) < 0.0) d1 = -d1;
         auto& ls = samples[road.roadLook];
+        currentLook = road.roadLook;
         for (int end = 0; end < 2; ++end) {
             const bool atStart = end == 0;
             const Vec2 pos = coords::worldToPlan(atStart ? p0 : p1);
@@ -457,9 +512,14 @@ std::optional<RoadNetwork> buildRoadNetwork(const MapBuildOptions& options, MapB
             if (const auto it = cal.find(road.roadLook); it != cal.end() && i < static_cast<int>(it->second.size())) {
                 return it->second[i];
             }
-            // Model for uncalibrated looks: lanes of laneWidth outward from half the median.
+            // Model for uncalibrated looks: lanes of laneWidth outward from half the
+            // median; one-way roads are centred on the node line.
             const auto& extra = left ? look.laneOffsetsLeft : look.laneOffsetsRight;
             const double shift = i < static_cast<int>(extra.size()) ? extra[i] : 0.0;
+            if (look.lanesLeft == 0 || look.lanesRight == 0) {
+                const int count = left ? look.lanesLeft : look.lanesRight;
+                return shift + (i - (count - 1) / 2.0) * options.laneWidth;
+            }
             return look.roadOffset / 2.0 + shift + (i + 0.5) * options.laneWidth;
         };
 
@@ -539,15 +599,105 @@ std::optional<RoadNetwork> buildRoadNetwork(const MapBuildOptions& options, MapB
         } else if (seg.kind == LaneKind::Road) {
             ++stats.roadEndsUnconnected;
             double nearest = 1e9;
+            std::uint32_t nearestId = 0;
             starts.near(end, 8.0, [&](std::uint32_t other, double gap) {
                 if (segs[other].kind != LaneKind::Prefab) return;
                 if (std::abs(headingDifference(endYaw, segmentStartYaw(segs[other]))) > kJoinAngle) return;
-                nearest = std::min(nearest, gap);
+                if (gap < nearest) {
+                    nearest = gap;
+                    nearestId = other;
+                }
             });
-            if (nearest < 8.0) ++stats.missGapHistogram[std::min<std::size_t>(31, static_cast<std::size_t>(nearest / 0.25))];
+            if (nearest < 8.0) {
+                ++stats.missGapHistogram[std::min<std::size_t>(31, static_cast<std::size_t>(nearest / 0.25))];
+                const auto rit = roadByUid.find(seg.itemUid);
+                if (rit != roadByUid.end() && stats.missSamples.size() < 20000) {
+                    MapBuildStats::GapSample g;
+                    g.look = tokenToString(rit->second->roadLook);
+                    g.left = seg.leftSide;
+                    g.lane = seg.laneIndex;
+                    const auto lk = looks.find(rit->second->roadLook);
+                    g.laneCount = lk == looks.end() ? 0 : (seg.leftSide ? lk->second.lanesLeft : lk->second.lanesRight);
+                    const Vec2 dir = coords::yawToDirection(endYaw);
+                    const Vec2 d = segs[nearestId].points.front().plan() - end;
+                    g.lateral = dot(d, Vec2{dir.y, -dir.x});
+                    g.longitudinal = dot(d, dir);
+                    stats.missSamples.push_back(g);
+                }
+            }
         }
     }
 
+    report(options, 0.92, "Linking merges");
+    // Merges and lane drops: a lane that ends where the next item has fewer (or
+    // shifted) lanes has a same-direction lane start about one lane width to the
+    // side. Linking it keeps the graph routable; the path builder turns the
+    // lateral offset into a smooth lane change.
+    for (std::uint32_t id = 0; id < segs.size(); ++id) {
+        auto& seg = segs[id];
+        if (!seg.next.empty() || seg.points.size() < 2) continue;
+        const Vec2 end = seg.points.back().plan();
+        const double endYaw = segmentEndYaw(seg);
+        const Vec2 dir = coords::yawToDirection(endYaw);
+        // Prefer a continuation straight ahead (some junction curves begin metres
+        // past the node), else a sideways merge into a neighbouring lane.
+        std::uint32_t ahead = 0, merge = 0;
+        double bestAhead = 1e9, bestMerge = 1e9;
+        starts.near(end, 25.0, [&](std::uint32_t other, double gap) {
+            if (other == id || segs[other].itemUid == seg.itemUid) return;
+            if (std::abs(headingDifference(endYaw, segmentStartYaw(segs[other]))) > degToRad(20.0)) return;
+            const Vec2 d = segs[other].points.front().plan() - end;
+            const double lon = dot(d, dir);
+            const double lat = std::abs(cross(dir, d));
+            if (lat <= 1.6 && lon >= -1.0 && lon < bestAhead) {
+                bestAhead = lon;
+                ahead = other;
+            } else if (gap <= 5.0 && gap < bestMerge) {
+                bestMerge = gap;
+                merge = other;
+            }
+        });
+        if (bestAhead < 1e9) {
+            seg.next.push_back(ahead);
+            ++stats.gapConnections;
+        } else if (bestMerge < 1e9) {
+            seg.next.push_back(merge);
+            ++stats.mergeConnections;
+        }
+    }
+
+    // Diagnostics: road lanes that still end without a successor although the map
+    // node at their end has another item attached are links the builder missed.
+    {
+        std::unordered_map<std::uint64_t, const MapRoad*> roadIndex;
+        for (const auto& r : roads) roadIndex[r.uid] = &r;
+        for (std::uint32_t id = 0; id < segs.size(); ++id) {
+            const auto& seg = segs[id];
+            if (seg.kind != LaneKind::Road || !seg.next.empty() || seg.points.size() < 2) continue;
+            const auto rit = roadIndex.find(seg.itemUid);
+            if (rit == roadIndex.end()) continue;
+            const std::uint64_t endNode = seg.leftSide ? rit->second->startNode : rit->second->endNode;
+            const auto n = nodes.find(endNode);
+            if (n == nodes.end()) continue;
+            const std::uint64_t other =
+                n->second.forwardItem == seg.itemUid ? n->second.backwardItem : n->second.forwardItem;
+            if (other == 0) {
+                ++stats.roadDeadEndsInMap;
+                continue;
+            }
+            ++stats.roadDeadEndsMissedLink;
+            if (stats.missedLinkSamples.size() < 12) {
+                char buf[160];
+                const Vec3 w = coords::planToWorld(seg.points.back().plan(), 0.0);
+                std::snprintf(buf, sizeof(buf), "road %016llx lane %u%s at (%.1f, %.1f) -> item %016llx",
+                              static_cast<unsigned long long>(seg.itemUid), seg.laneIndex, seg.leftSide ? "L" : "R",
+                              w.x, w.z, static_cast<unsigned long long>(other));
+                stats.missedLinkSamples.push_back(buf);
+            }
+        }
+    }
+
+    report(options, 0.94, "Snapping lanes");
     // Road lanes come from a lane-offset model while junction curves are authored
     // geometry, so the residual gap at a join is closed by shifting the road lane's
     // ends onto the junction curve, blending the correction along the road.
@@ -559,30 +709,102 @@ std::optional<RoadNetwork> buildRoadNetwork(const MapBuildOptions& options, MapB
         auto& seg = segs[id];
         if (seg.kind != LaneKind::Road || seg.points.size() < 2) continue;
         Vec2 startShift, endShift;
+        // Only regular joins are snapped; merge and gap links are bridged by the path builder.
         for (auto p : preds[id]) {
-            if (segs[p].kind == LaneKind::Prefab) {
-                startShift = segs[p].points.back().plan() - seg.points.front().plan();
+            const Vec2 shift = segs[p].points.back().plan() - seg.points.front().plan();
+            if (segs[p].kind == LaneKind::Prefab && shift.length() <= kJoinTolerance) {
+                startShift = shift;
                 break;
             }
         }
         for (auto n : seg.next) {
-            if (segs[n].kind == LaneKind::Prefab) {
-                endShift = segs[n].points.front().plan() - seg.points.back().plan();
+            const Vec2 shift = segs[n].points.front().plan() - seg.points.back().plan();
+            if (segs[n].kind == LaneKind::Prefab && shift.length() <= kJoinTolerance) {
+                endShift = shift;
                 break;
             }
         }
         if (startShift.lengthSq() < 1e-6 && endShift.lengthSq() < 1e-6) continue;
-        double total = 0.0;
-        for (std::size_t i = 1; i < seg.points.size(); ++i) total += distance(seg.points[i - 1].plan(), seg.points[i].plan());
-        double s = 0.0;
+        // Blend factors come from the unmodified geometry, so shifting a point can
+        // never feed back into the factor of the next one.
+        std::vector<double> along(seg.points.size(), 0.0);
+        for (std::size_t i = 1; i < seg.points.size(); ++i) {
+            along[i] = along[i - 1] + distance(seg.points[i - 1].plan(), seg.points[i].plan());
+        }
+        const double total = along.back();
         for (std::size_t i = 0; i < seg.points.size(); ++i) {
-            if (i > 0) s += distance(seg.points[i - 1].plan(), seg.points[i].plan());
-            const Vec2 shift = lerp(startShift, endShift, total > 0.0 ? s / total : 0.0);
+            const double t = total > 1e-6 ? clamp(along[i] / total, 0.0, 1.0) : 0.0;
+            const Vec2 shift = lerp(startShift, endShift, t);
             seg.points[i].x += static_cast<float>(shift.x);
             seg.points[i].y += static_cast<float>(shift.y);
         }
     }
 
+    report(options, 0.96, "Resolving destinations");
+    // Destinations: each company item with the lanes of its depot prefab.
+    std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> lanesByItem;
+    for (std::uint32_t id = 0; id < segs.size(); ++id) {
+        if (segs[id].kind == LaneKind::Prefab) lanesByItem[segs[id].itemUid].push_back(id);
+    }
+    std::unordered_map<std::uint64_t, const MapPrefab*> prefabByUid;
+    for (const auto& p : prefabs) prefabByUid[p.uid] = &p;
+    // Most depot prefabs have no drivable nav curves of their own; they attach to
+    // the road network at their prefab nodes. A depot is therefore reached by any
+    // lane that ends at one of those nodes (the entrance), plus its own lanes if any.
+    EndpointIndex laneEnds(4.0);
+    for (std::uint32_t id = 0; id < segs.size(); ++id) {
+        if (segs[id].points.size() >= 2) laneEnds.add(segs[id].points.back().plan(), id);
+    }
+    for (const auto& c : companies) {
+        const auto prefab = prefabByUid.find(c.prefab);
+        const auto node = nodes.find(c.node);
+        if (prefab == prefabByUid.end()) {
+            ++stats.companiesPrefabMissing;
+            continue;
+        }
+        if (node == nodes.end()) {
+            ++stats.companiesNodeMissing;
+            continue;
+        }
+        Destination d;
+        d.city = c.city;
+        d.company = c.company;
+        d.position = coords::worldToPlan(node->second.position);
+        if (const auto own = lanesByItem.find(c.prefab); own != lanesByItem.end()) d.lanes = own->second;
+        for (auto nodeUid : prefab->second->nodes) {
+            const auto n = nodes.find(nodeUid);
+            if (n == nodes.end()) continue;
+            laneEnds.nearPoints(coords::worldToPlan(n->second.position), 8.0, [&](const Vec2&, std::uint32_t id) {
+                if (segs[id].itemUid != c.prefab && std::find(d.lanes.begin(), d.lanes.end(), id) == d.lanes.end()) {
+                    d.lanes.push_back(id);
+                }
+            });
+        }
+        if (d.lanes.empty()) {
+            ++stats.companiesWithoutLanes;
+            continue;
+        }
+        net.addDestination(std::move(d));
+    }
+    stats.destinations = net.destinations().size();
+    stats.companies = companies.size();
+
+    // Geometry sanity: a non-finite or out-of-map coordinate is dropped with its
+    // lane rather than indexed (it would also be meaningless to steer along).
+    for (auto& seg : segs) {
+        const bool bad = std::any_of(seg.points.begin(), seg.points.end(), [](const LanePoint& p) {
+            return !std::isfinite(p.x) || !std::isfinite(p.y) || std::abs(p.x) > 1e6f || std::abs(p.y) > 1e6f;
+        });
+        if (!bad) continue;
+        ++stats.badSegments;
+        if (stats.badSegmentSamples.size() < 5) {
+            stats.badSegmentSamples.push_back(std::string(seg.kind == LaneKind::Road ? "road " : "prefab ") +
+                                              std::to_string(seg.itemUid));
+        }
+        seg.points.clear();
+        seg.next.clear();
+    }
+    report(options, 0.98, "Indexing");
     net.finalize();
     stats.lanes = net.size();
     for (const auto& s : net.segments()) stats.points += s.points.size();

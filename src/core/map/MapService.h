@@ -3,6 +3,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <filesystem>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -13,6 +14,7 @@
 #include "config/Config.h"
 #include "map/LanePlanner.h"
 #include "map/RoadNetwork.h"
+#include "map/RoutePlanner.h"
 #include "pilot/PilotTypes.h"
 #include "pilot/VehicleState.h"
 #include "util/Logger.h"
@@ -54,6 +56,7 @@ private:
     void run();
     bool loadOrBuild();
     void planOnce();
+    void updateRoute(const VehicleConfig& vc, const LocalizationResult& loc, const Config& cfg, double wall);
 
     Logger& log_;
     mutable std::mutex cfgMutex_;
@@ -88,6 +91,15 @@ private:
     std::uint64_t generation_ = 0;
     std::optional<Vec2> lastPos_;
     std::string lastFailure_;
+
+    // Routing (planner thread). Declared after net_ so a running search is
+    // waited for before the network it reads is destroyed.
+    std::string destinationKey_;
+    std::shared_ptr<const Route> route_;
+    std::future<Route> routeFuture_;
+    double routeRetryWall_ = 0.0;
+    double offRouteSince_ = -1.0;
+    bool destinationMissingLogged_ = false;
 };
 
 }  // namespace atspilot

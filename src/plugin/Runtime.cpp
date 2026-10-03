@@ -416,7 +416,8 @@ void Runtime::workerLoop() {
             std::ostringstream j;
             j << "{\"mode\":\"" << toString(st.mode) << "\",\"available\":" << (st.available ? "true" : "false")
               << ",\"telemetry\":" << (st.telemetryConnected ? "true" : "false")
-              << ",\"map\":" << (st.mapLoaded ? "true" : "false") << ",\"units\":\"" << unitLabel(units)
+              << ",\"map\":" << (st.mapLoaded ? "true" : "false")
+              << ",\"navigation\":" << (st.navigationActive ? "true" : "false") << ",\"units\":\"" << unitLabel(units)
               << "\",\"speed\":" << std::lround(mpsToSpeed(st.speed, units))
               << ",\"set_speed\":" << std::lround(mpsToSpeed(st.setSpeed, units))
               << ",\"target_speed\":" << std::lround(mpsToSpeed(st.targetSpeed, units))

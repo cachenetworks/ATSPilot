@@ -33,7 +33,7 @@ disagree, the headers win.
 | `truck.wipers` | rain proxy for curve-speed derating |
 | events `frame_start/frame_end/paused/started` | timing, pause handling |
 | `configuration` `truck` | wheel positions, steerable and powered wheels, giving the wheelbase |
-| `configuration` `trailer.N`, `job` | trailer count, cargo mass |
+| `configuration` `trailer.N`, `job` | trailer count, cargo mass, `destination.city.id` + `destination.company.id` for routing |
 | `gameplay` `player.use.ferry/train`, `job.delivered/cancelled` | route invalidation |
 
 ### Finding: the GPS route is not exposed
@@ -42,9 +42,11 @@ limit. It does not expose the route polyline or the destination position.
 
 **Impact:** ATSPilot cannot read the waypoints of the in-game GPS.
 
-**Solution (planned):** route over the parsed lane graph to the job's
-destination company, and correlate it with the navigation distance. Until then,
-junctions use "follow the road".
+**Solution (implemented):** ATSPilot routes over the parsed lane graph to the
+job's destination company, using the company tokens from the job
+configuration. Correlating that route with the game's navigation distance is
+still to do. Special-transport jobs have no destination company id and fall
+back to "follow the road".
 
 ### Finding: no traffic information
 The SDK exposes nothing about other vehicles, traffic lights or signs. Traffic

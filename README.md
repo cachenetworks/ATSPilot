@@ -22,24 +22,29 @@ and no external app.
 | Steering / throttle / brake output through an SDK **semantical input device** | implemented |
 | Configurable hotkeys: autopilot, lane assist, cruise, set speed ±, resume, cancel, emergency disable | implemented |
 | Cruise control: PID with brake hysteresis, rate-limited pedals, follows the navigation speed limit | implemented, simulator-tested |
-| Map: HashFS v1/v2 reader, sector (`.base` v907) and prefab (`.ppd` v25) parsers, lane graph for the whole USA map, cached | implemented, parses 925/925 sectors of ATS 1.61 with 0 errors |
+| Map: HashFS v1/v2 reader, sector (`.base` v907) and prefab (`.ppd` v25) parsers, lane graph for the whole USA map, cached | implemented; 925/925 sectors of ATS 1.61 parse with 0 errors, 97.2% of lane ends connect, 2,106 depots resolved |
 | Localization with lane hysteresis | implemented |
-| Rolling path along the lane graph, "follow the road" at junctions | implemented |
+| Rolling path along the lane graph | implemented |
+| Navigation: A* route over the lane graph to the job's destination depot (lane changes, merges, recalculation when off-route, "Destination Reached" stop at the entrance) | implemented; plugin-host delivery of 7.3 km passes |
 | Pure Pursuit (default) and Stanley steering, speed-adaptive lookahead, rate limiting | implemented, simulator-tested |
 | Curve speed planning (lateral-acceleration limit, trailer/cargo/rain derating) | implemented, simulator-tested |
 | Safety: driver override, watchdog, command expiry, controlled emergency stop, pause/teleport/ferry handling, steering-sign self-check | implemented, unit-tested |
 | Logging (rotating), status file, audio cues, CSV telemetry recorder | implemented |
-| GPS route following, traffic awareness, lane changes, traffic lights, parking | **not implemented** (see [roadmap](#roadmap)) |
+| Traffic awareness, traffic lights/stop signs, overtaking, parking | **not implemented** (see [roadmap](#roadmap)) |
 
 ## Current limitations
 
 - **No traffic awareness.** ATSPilot does not see other vehicles, traffic
   lights or stop signs. The SDK does not expose them. Stay alert and brake;
   braking always disengages ATSPilot.
-- **No GPS route following yet.** At every fork ATSPilot takes the straightest
-  continuation ("follow the road"), so it will not take an exit unless the
-  road curves that way. The SDK reports only the navigation distance, time and
-  speed limit, not the route polyline.
+- **Routes are ATSPilot's own, not the in-game GPS route.** The SDK does not
+  expose the GPS route polyline. ATSPilot plans its own route to the job's
+  destination depot from the map data. It may pick a different, equally valid
+  road than the in-game GPS. With no job (or with special transport, which has
+  no destination company id) it follows the road and takes the straightest
+  continuation at forks.
+- **Lane changes are planned, not traffic-checked.** A lane change needed by the
+  route is executed as a smooth blend without checking for other vehicles.
 - **Not yet tuned against ATS physics.** Controller gains, the steering-angle
   estimate and the input-mixing assumptions come from the SDK documentation, the
   game's `controls.sii` and simulation. In-game tuning is the next step.
@@ -76,8 +81,9 @@ Uninstall with `install.ps1 -Uninstall`, or delete the DLL.
 
 ## Usage
 
-1. Drive onto a road and settle in a lane.
-2. Press **F9** to engage the autopilot. ATSPilot refuses with a reason (in the
+1. Accept a job (optional: with a job, ATSPilot routes to the destination depot
+   and stops at its entrance, "Destination Reached"; parking stays manual).
+2. Drive onto a road, settle in a lane, and press **F9** to engage the autopilot. ATSPilot refuses with a reason (in the
    log and console) if telemetry, the map or the lane match is not valid.
 3. Adjust the set speed with **=** / **-**. Engaging while moving holds your
    current speed.
@@ -111,6 +117,7 @@ documented defaults on first start. Main sections:
 - `[cruise]`: PID gains, brake thresholds
 - `[planner]`: curve lateral-acceleration limit, deceleration, aggressiveness
 - `[safety]`: override thresholds, timeouts, deviation limits
+- `[route]`: navigation on/off, lane-change cost, off-route recalculation delay
 - `[controls]`, `[map]`, `[audio]`, `[debug]`
 
 Invalid values are clamped or replaced by defaults and listed in the log. A bad
@@ -157,7 +164,8 @@ Dependencies (zlib, doctest) are fetched by CMake.
 Development tools (built into `build/cmake/src/tools/<Config>/`):
 
 - `atspilot_sim`: closed-loop controller scenarios (straight, curves, S-curve, cloverleaf ramp, loaded trailer)
-- `atspilot_mapdump`: `ls`/`cat` archive contents, `build` the map with statistics, `locate` a world position
+- `atspilot_mapdump`: `ls`/`cat` archive contents, `build` the map with statistics, `locate` a world
+  position, `companies`, `route`/`routefrom` (A* between depots), `reach` (connectivity), `item` (raw map items)
 - `atspilot_plugin_host`: loads the real `atspilot.dll`, plays the game's side of the SDK, and drives a simulated truck on real map geometry
 
 See [docs/testing.md](docs/testing.md).
@@ -180,7 +188,7 @@ Documentation: [architecture](docs/architecture.md) · [control system](docs/con
 | Steering follows highway geometry, curves without oscillation | simulator- and plugin-host-tested on real ATS geometry |
 | Loss of valid state disengages | implemented and tested |
 | Logs explain behaviour | implemented |
-| Unit/controller tests pass | 75 test cases pass |
+| Unit/controller tests pass | 82 test cases pass |
 | Installation documented, build reproducible | done |
 
 ## Roadmap
@@ -188,13 +196,11 @@ Documentation: [architecture](docs/architecture.md) · [control system](docs/con
 1. **In-game validation and tuning** (next): confirm the semantical input
    mixing and steering sign, measure the steering ratio, and tune gains with the
    telemetry recorder.
-2. Highway pilot hardening: lane-drop and merge handling, trailer-aware steering
-   gains.
-3. GPS routing: an A* route over the lane graph to the job destination,
-   correlated with the navigation distance.
-4. Traffic awareness: an optional, asynchronous computer-vision module for lead
+2. Highway pilot hardening: trailer-aware steering gains, lane changes timed
+   with more look-ahead, correlating the route with the game's navigation distance.
+3. Traffic awareness: an optional, asynchronous computer-vision module for lead
    vehicles (time-gap adaptive cruise), traffic lights and lane markings.
-5. Delivery autopilot, then parking assist.
+4. Intersections (traffic lights, stop signs), then parking assist.
 
 ## Privacy and security
 

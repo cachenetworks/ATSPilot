@@ -3,6 +3,7 @@
 #include <chrono>
 
 #include "map/MapBuilder.h"
+#include "map/Token.h"
 #include "math/Coordinates.h"
 #include "math/MathUtil.h"
 
@@ -142,6 +143,73 @@ void MapService::run() {
     path_.reset();
 }
 
+void MapService::updateRoute(const VehicleConfig& vc, const LocalizationResult& loc, const Config& cfg, double wall) {
+    const std::string key = cfg.route.enabled && vc.hasJob && !vc.destinationCompanyId.empty()
+                                ? vc.destinationCityId + "/" + vc.destinationCompanyId
+                                : std::string();
+    if (key != destinationKey_) {
+        destinationKey_ = key;
+        route_.reset();
+        offRouteSince_ = -1.0;
+        routeRetryWall_ = 0.0;
+        destinationMissingLogged_ = false;
+        if (!key.empty()) log_.info("Navigation destination: {}", key);
+    }
+
+    if (routeFuture_.valid() && routeFuture_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        Route r = routeFuture_.get();
+        if (r.found) {
+            log_.info("Route calculated: {:.1f} km, {} lane segments ({} expanded)", r.length / 1000.0, r.steps.size(),
+                      r.expanded);
+            route_ = std::make_shared<const Route>(std::move(r));
+            offRouteSince_ = -1.0;
+        } else {
+            log_.warn("Route unavailable: {}", r.failure);
+            routeRetryWall_ = wall + 30.0;
+        }
+    }
+    if (key.empty()) return;
+
+    // Off-route detection: the truck's lane is neither on the route nor beside it.
+    if (route_) {
+        bool onRoute = route_->find(loc.match.segment) >= 0;
+        if (!onRoute) {
+            for (auto n : net_->laneNeighbors(loc.match.segment)) onRoute = onRoute || route_->find(n) >= 0;
+        }
+        if (onRoute) {
+            offRouteSince_ = -1.0;
+        } else if (offRouteSince_ < 0.0) {
+            offRouteSince_ = wall;
+        } else if (wall - offRouteSince_ > cfg.route.recalcAfter) {
+            log_.info("Left the route (wrong turn, missed exit or manual override); recalculating");
+            route_.reset();
+            offRouteSince_ = -1.0;
+            routeRetryWall_ = 0.0;
+        }
+    }
+
+    if (!route_ && !routeFuture_.valid() && wall >= routeRetryWall_) {
+        const Destination* dest = net_->findDestination(tokenFromString(vc.destinationCityId),
+                                                        tokenFromString(vc.destinationCompanyId));
+        if (!dest) {
+            if (!destinationMissingLogged_) {
+                log_.warn("Destination {} not found in the map data; following the road instead", key);
+                destinationMissingLogged_ = true;
+            }
+            routeRetryWall_ = wall + 60.0;
+            return;
+        }
+        RouteOptions opts;
+        opts.laneChangeCost = cfg.route.laneChangeCost;
+        const RoadNetwork* net = net_.get();
+        const std::uint32_t startSeg = loc.match.segment;
+        const double startS = loc.match.s;
+        const std::vector<std::uint32_t> goals = dest->lanes;
+        routeFuture_ = std::async(std::launch::async,
+                                  [net, startSeg, startS, goals, opts] { return planRoute(*net, startSeg, startS, goals, opts); });
+    }
+}
+
 void MapService::planOnce() {
     VehicleState s;
     VehicleConfig vc;
@@ -190,11 +258,13 @@ void MapService::planOnce() {
         lastFailure_.clear();
     }
 
+    updateRoute(vc, loc, cfg, wall);
+
     PathBuildParams pp;
     pp.ahead = cfg.map.pathAhead;
     pp.behind = cfg.map.pathBehind;
     const bool continuing = std::find(chain_.begin(), chain_.end(), loc.match.segment) != chain_.end();
-    PlannedPath planned = buildPlannedPath(*net_, loc.match, pp, chain_);
+    PlannedPath planned = buildPlannedPath(*net_, loc.match, pp, chain_, route_.get());
     if (!continuing) ++generation_;
     chain_ = planned.chain;
 
@@ -206,6 +276,8 @@ void MapService::planOnce() {
     snap->nextManeuver = planned.nextManeuver;
     snap->nextManeuverDistance = planned.nextManeuverDistance;
     snap->generation = generation_;
+    snap->navigationActive = planned.onRoute;
+    snap->routeRemaining = planned.routeRemaining;
     std::lock_guard lock(outMutex_);
     path_ = std::move(snap);
     pathWall_ = wall;

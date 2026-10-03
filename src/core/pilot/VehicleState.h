@@ -54,6 +54,8 @@ struct VehicleConfig {
     double cargoMassKg = 0.0;
     bool hasJob = false;
     std::string destinationCity;
+    std::string destinationCityId;     // job "destination.city.id", e.g. "fresno"
+    std::string destinationCompanyId;  // job "destination.company.id"; empty for special transport
 };
 
 }  // namespace atspilot

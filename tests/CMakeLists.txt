@@ -3,6 +3,7 @@ add_executable(atspilot_tests
   test_map.cpp
   test_math.cpp
   test_path.cpp
+  test_route.cpp
   test_control.cpp
   test_config.cpp
   test_safety.cpp

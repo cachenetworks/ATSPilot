@@ -16,6 +16,19 @@ extern "C" int atspilot_dev_request(int request) {
     return 0;
 }
 
+// Writes "<nav|nonav>|<route m>|<next maneuver>|<maneuver m>" into buf.
+extern "C" int atspilot_dev_navigation(char* buf, int size) {
+    Runtime* rt = Runtime::instance();
+    if (!rt || !buf || size <= 0) return -1;
+    const PilotStatus st = rt->pilotStatus();
+    const std::string s = std::string(st.navigationActive ? "nav" : "nonav") + "|" +
+                          std::to_string(static_cast<long long>(st.routeDistance)) + "|" + st.nextManeuver + "|" +
+                          std::to_string(static_cast<long long>(st.nextManeuverDistance));
+    std::strncpy(buf, s.c_str(), static_cast<std::size_t>(size) - 1);
+    buf[size - 1] = '\0';
+    return 0;
+}
+
 // Writes "<mode>|<map state>|<status message>" into buf.
 extern "C" int atspilot_dev_state(char* buf, int size) {
     Runtime* rt = Runtime::instance();

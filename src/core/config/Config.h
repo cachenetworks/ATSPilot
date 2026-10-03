@@ -63,6 +63,12 @@ struct MapConfig {
     double maxLocalizationDistance = 12.0;  // m from a lane centre
 };
 
+struct RouteConfig {
+    bool enabled = true;
+    double laneChangeCost = 60.0;  // m of driving a lane change is worth when routing
+    double recalcAfter = 1.0;      // s off the route before recalculating
+};
+
 struct DebugConfig {
     bool logging = true;
     std::string logLevel = "info";
@@ -84,6 +90,7 @@ struct Config {
     SafetyConfig safety;
     ControlsConfig controls;
     MapConfig map;
+    RouteConfig route;
     bool audioEnabled = true;
     DebugConfig debug;
 };

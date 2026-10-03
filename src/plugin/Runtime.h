@@ -72,6 +72,7 @@ public:
     void queueRequest(PilotRequest r);
     PilotMode mode() const { return pilot_ ? pilot_->mode() : PilotMode::Off; }
     std::string statusMessage() const { return pilot_ ? pilot_->status().statusMessage : std::string(); }
+    PilotStatus pilotStatus() const { return pilot_ ? pilot_->status() : PilotStatus{}; }
     MapState mapState() const { return map_ ? map_->state() : MapState::Disabled; }
 
     Logger& log() { return log_; }

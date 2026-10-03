@@ -234,10 +234,17 @@ void readItem(BinaryReader& r, std::uint32_t type, SectorData& out, bool allowCo
             r.skipArray32(kTok);
             r.skip(kU64 + 12 + kTok + 4 + 4);
             break;
-        case Company:
-            r.skip(kTok + kU64 + kTok + kU64);
-            r.skipArray32(kU64 + 4);
+        case Company: {
+            MapCompany c;
+            c.uid = h.uid;
+            c.city = r.u64();
+            c.prefab = r.u64();
+            c.company = r.u64();
+            c.node = r.u64();
+            r.skipArray32(kU64 + 4);  // spot nodes
+            out.companies.push_back(c);
             break;
+        }
         case Service:
         case FuelPump:
             r.skip(kU64 * 2);

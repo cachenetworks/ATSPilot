@@ -3,7 +3,7 @@
 ## Unit and controller tests (`tests/`, doctest)
 
 Run them with `./build.ps1`, or `ctest -C Release` in the build directory.
-There are 75 test cases. They cover:
+There are 82 test cases. They cover:
 
 - **Maths:** angle normalization and differences, curvature sign and radius,
   quaternion rotation, Hermite splines, SDK heading and world/plan conversions
@@ -39,6 +39,13 @@ There are 75 test cases. They cover:
   - lane-graph query and cache round-trip with fingerprint check
   - localizer heading selection and hysteresis
   - path-builder branch choice and plan stability
+- **Routing:**
+  - lane neighbours
+  - A* with a required lane change, where every step must be a real edge
+  - unreachable destinations
+  - staying in lane when possible
+  - route-following path with a smooth lane-change blend and manoeuvre announcement
+  - arrival stop
 - **Scenarios** (closed loop through `Autopilot`): straight, recovery from an
   offset, R = 800, R = 60, S curve, cloverleaf ramp, loaded trailer with a slow
   steering rack, Stanley variant, cruise hold.
@@ -61,7 +68,7 @@ atspilot_mapdump ls "<ATS dir>\base_map.scs" map/usa
 ## Plugin host (end-to-end without the game)
 
 ```powershell
-atspilot_plugin_host <atspilot.dll> "<ATS dir>" map.cache [scenarios] [seconds] [speedup]
+atspilot_plugin_host <atspilot.dll> "<ATS dir>" map.cache [scenarios] [seconds] [speedup] [nav_seconds]
 ```
 
 The host loads the real DLL and calls its exports exactly as ATS would:
@@ -76,10 +83,16 @@ host engages the autopilot through the development export and measures lane
 deviation with an independent localizer.
 
 Latest run (ATS 1.61 map, 8 scenarios × 90 s at 4× speed): **8/8 stayed
-engaged, about 15 km driven, RMS lane deviation 0.02–0.06 m on roads.** One
-scenario ran into a city intersection (R ≈ 20 m), where Pure Pursuit cut the
-corner by 1.2–2.4 m. That is expected with highway-tuned lookahead and is
-documented in control-system.md.
+engaged, about 15 km driven, RMS lane deviation 0.02–0.06 m.**
+
+With `nav_seconds`, the host also sends a job configuration event. The
+destination is a real depot 2.5–8 km away. The host then checks that the
+plugin plans a route, follows it with navigation active and stops at the
+entrance. Latest run: Winner `gld_frm_grg`, 7.3 km planned, 7,325 m driven,
+ending in "Destination Reached".
+
+In tight city intersections (R ≈ 20 m), Pure Pursuit with the highway-tuned
+lookahead cuts corners by 1–2 m (see control-system.md).
 
 ## What still needs the real game
 

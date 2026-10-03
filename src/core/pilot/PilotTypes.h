@@ -52,6 +52,8 @@ struct PathSnapshot {
     std::string nextManeuver;
     double nextManeuverDistance = 0.0;
     std::uint64_t generation = 0;   // increments when the route/lane choice changes discontinuously
+    bool navigationActive = false;  // path follows a planned route to the job destination
+    double routeRemaining = 0.0;    // m
 };
 
 using PathSnapshotPtr = std::shared_ptr<const PathSnapshot>;
@@ -83,6 +85,7 @@ struct PilotStatus {
     double targetSpeed = 0.0;  // m/s
     double crossTrackError = 0.0;
     double routeDistance = 0.0;
+    bool navigationActive = false;
     std::string road;
     std::string nextManeuver;
     double nextManeuverDistance = 0.0;

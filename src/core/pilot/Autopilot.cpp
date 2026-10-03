@@ -237,7 +237,8 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
         status_.nextManeuver = path->nextManeuver;
         status_.nextManeuverDistance = path->nextManeuverDistance;
     }
-    status_.routeDistance = s.navigationDistance;
+    status_.navigationActive = path && path->navigationActive;
+    status_.routeDistance = status_.navigationActive ? path->routeRemaining : s.navigationDistance;
     status_.available = !checkAvailability(PilotMode::Autopilot, s, path, wallNow, pathWall).has_value();
 
     if (s.valid) learnSteeringRatio(s);
@@ -261,6 +262,14 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
             return last_;
         }
         enterEmergency(*stale);
+    }
+
+    // Arrival: the route ends at the depot entrance and parking stays manual, so
+    // once the truck has stopped there the drive is complete.
+    if (mode_ == PilotMode::Autopilot && path && path->navigationActive && path->routeRemaining < 40.0 &&
+        std::abs(s.speed) < 0.5) {
+        disengage("Destination Reached");
+        return last_;
     }
 
     const OverrideKind ov = override_.update(s, last_);

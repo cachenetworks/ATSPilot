@@ -22,6 +22,8 @@
 #include <vector>
 
 #include "map/LanePlanner.h"
+#include "map/RoutePlanner.h"
+#include "map/Token.h"
 #include "map/RoadNetwork.h"
 #include "math/Coordinates.h"
 #include "math/MathUtil.h"
@@ -177,6 +179,46 @@ void sendTruckConfig(const sim::SimParams& p) {
     fireEvent(SCS_TELEMETRY_EVENT_configuration, &cfg);
 }
 
+void sendJobConfig(const std::string& cityId, const std::string& companyId) {
+    std::vector<scs_named_value_t> attrs;
+    auto addString = [&](const char* name, const std::string* value) {
+        scs_named_value_t a{};
+        a.name = name;
+        a.index = SCS_U32_NIL;
+        a.value.type = SCS_VALUE_TYPE_string;
+        a.value.value_string.value = value->c_str();
+        attrs.push_back(a);
+    };
+    static std::string city, company, cityName, cargo;
+    city = cityId;
+    company = companyId;
+    cityName = cityId;
+    cargo = "test_cargo";
+    addString(SCS_TELEMETRY_CONFIG_ATTRIBUTE_cargo_id, &cargo);
+    addString(SCS_TELEMETRY_CONFIG_ATTRIBUTE_destination_city_id, &city);
+    addString(SCS_TELEMETRY_CONFIG_ATTRIBUTE_destination_city, &cityName);
+    addString(SCS_TELEMETRY_CONFIG_ATTRIBUTE_destination_company_id, &company);
+    scs_named_value_t mass{};
+    mass.name = SCS_TELEMETRY_CONFIG_ATTRIBUTE_cargo_mass;
+    mass.index = SCS_U32_NIL;
+    mass.value.type = SCS_VALUE_TYPE_float;
+    mass.value.value_float.value = 18000.0f;
+    attrs.push_back(mass);
+    attrs.push_back(scs_named_value_t{});
+    scs_telemetry_configuration_t cfg{};
+    cfg.id = SCS_TELEMETRY_CONFIG_job;
+    cfg.attributes = attrs.data();
+    fireEvent(SCS_TELEMETRY_EVENT_configuration, &cfg);
+}
+
+std::string devNavigation(HMODULE dll) {
+    using Fn = int (*)(char*, int);
+    auto fn = reinterpret_cast<Fn>(GetProcAddress(dll, "atspilot_dev_navigation"));
+    char buf[512] = {};
+    if (fn) fn(buf, sizeof(buf));
+    return buf;
+}
+
 std::string devState(HMODULE dll) {
     using Fn = int (*)(char*, int);
     auto fn = reinterpret_cast<Fn>(GetProcAddress(dll, "atspilot_dev_state"));
@@ -222,7 +264,7 @@ std::vector<std::uint32_t> pickStarts(const RoadNetwork& net, int count, std::ui
 
 int main(int argc, char** argv) {
     if (argc < 4) {
-        std::fprintf(stderr, "usage: atspilot_plugin_host <atspilot.dll> <game_dir> <map.cache> [scenarios] [seconds] [speedup]\n");
+        std::fprintf(stderr, "usage: atspilot_plugin_host <atspilot.dll> <game_dir> <map.cache> [scenarios] [seconds] [speedup] [nav_seconds]\n");
         return 2;
     }
     const std::filesystem::path dllPath = std::filesystem::absolute(argv[1]);
@@ -231,6 +273,7 @@ int main(int argc, char** argv) {
     const int scenarios = argc > 4 ? std::atoi(argv[4]) : 5;
     const double seconds = argc > 5 ? std::atof(argv[5]) : 90.0;
     const double speedup = argc > 6 ? std::atof(argv[6]) : 4.0;
+    const double navSeconds = argc > 7 ? std::atof(argv[7]) : 0.0;
 
     const auto net = loadCache(cacheFile);
     if (!net) {
@@ -421,11 +464,118 @@ int main(int argc, char** argv) {
         devRequest(static_cast<int>(PilotRequest::Cancel));
     }
 
+    // --- Navigation scenario: a job to a depot a few km away ---------------------
+    int navResult = -1;
+    if (navSeconds > 0.0) {
+        // Find a depot 2.5-8 km away (straight line) that is reachable by route.
+        std::mt19937 rng(99);
+        std::uniform_int_distribution<std::size_t> pickLane(0, net->size() - 1);
+        std::uint32_t startLane = 0;
+        const Destination* dest = nullptr;
+        double routeLen = 0.0;
+        for (int attempt = 0; attempt < 50 && !dest; ++attempt) {
+            const auto id = static_cast<std::uint32_t>(pickLane(rng));
+            const auto& s = net->segment(id);
+            if (s.kind != LaneKind::Road || s.length < 100.0f || s.next.empty()) continue;
+            for (const auto& d : net->destinations()) {
+                const double crow = atspilot::distance(s.points.front().plan(), d.position);
+                if (crow < 2500.0 || crow > 8000.0) continue;
+                const Route r = planRoute(*net, id, 0.0, d.lanes);
+                if (!r.found || r.length > 15000.0) continue;
+                startLane = id;
+                dest = &d;
+                routeLen = r.length;
+                break;
+            }
+        }
+        if (!dest) {
+            std::printf("navigation scenario: no suitable depot found\n");
+        } else {
+            const std::string city = tokenToString(dest->city), company = tokenToString(dest->company);
+            std::printf("navigation scenario: lane %u -> %s/%s, planned %.1f km\n", startLane, city.c_str(),
+                        company.c_str(), routeLen / 1000.0);
+            sendJobConfig(city, company);
+            const auto& seg = net->segment(startLane);
+            const Vec2 a = seg.points[0].plan(), b = seg.points[1].plan();
+            sim::VehicleSim truck(sp);
+            truck.reset(a, std::atan2(b.y - a.y, b.x - a.x), 18.0);
+            float navSem[3] = {0, 0, 0};
+            const double dt = 1.0 / 60.0;
+            const auto wallStart = std::chrono::steady_clock::now();
+            bool engaged = false, sawNav = false;
+            double driven = 0.0, minRemaining = 1e12;
+            Vec2 last = truck.rearAxle();
+            std::string endState, lastNav;
+            for (double t = 0.0; t < navSeconds; t += dt) {
+                simClock += dt;
+                const double wallElapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - wallStart).count();
+                if (t / speedup > wallElapsed) std::this_thread::sleep_for(std::chrono::duration<double>(t / speedup - wallElapsed));
+                const VehicleState s = truck.state();
+                scs_telemetry_frame_start_t fs{};
+                fs.simulation_time = static_cast<scs_timestamp_t>(simClock * 1e6);
+                fireEvent(SCS_TELEMETRY_EVENT_frame_start, &fs);
+                sendPlacement(s.worldPosition, s.headingUnit);
+                sendFloat(SCS_TELEMETRY_TRUCK_CHANNEL_speed, static_cast<float>(s.speed));
+                sendFloat(SCS_TELEMETRY_TRUCK_CHANNEL_input_steering, -navSem[0]);
+                sendFloat(SCS_TELEMETRY_TRUCK_CHANNEL_input_throttle, navSem[1]);
+                sendFloat(SCS_TELEMETRY_TRUCK_CHANNEL_input_brake, navSem[2]);
+                sendFloat(SCS_TELEMETRY_TRUCK_CHANNEL_effective_steering, static_cast<float>(s.effectiveSteering));
+                for (scs_u32_t w = 0; w < 2; ++w) {
+                    sendFloat(SCS_TELEMETRY_TRUCK_CHANNEL_wheel_steering, static_cast<float>(s.steerableWheelAngle / kTwoPi), w);
+                }
+                sendBool(SCS_TELEMETRY_TRUCK_CHANNEL_parking_brake, false);
+                sendBool(SCS_TELEMETRY_TRUCK_CHANNEL_engine_enabled, true);
+                sendS32(SCS_TELEMETRY_TRUCK_CHANNEL_engine_gear, 8);
+                fireEvent(SCS_TELEMETRY_EVENT_frame_end, nullptr);
+                scs_u32_t flags = SCS_INPUT_EVENT_CALLBACK_FLAG_first_in_frame;
+                for (int guard = 0; guard < 16; ++guard) {
+                    scs_input_event_t ev{};
+                    if (g_device.input_event_callback(&ev, flags, g_device.callback_context) != SCS_RESULT_ok) break;
+                    if (ev.input_index < 3) navSem[ev.input_index] = ev.value_float.value;
+                    flags = 0;
+                }
+                ControlCommand cmd;
+                cmd.active = cmd.steerActive = cmd.pedalsActive = true;
+                cmd.steering = -navSem[0];
+                cmd.throttle = navSem[1];
+                cmd.brake = navSem[2];
+                truck.step(cmd, dt);
+                driven += atspilot::distance(last, truck.rearAxle());
+                last = truck.rearAxle();
+
+                if (!engaged && t > 2.0) {
+                    devRequest(static_cast<int>(PilotRequest::ToggleAutopilot));
+                    engaged = true;
+                }
+                const std::string nav = devNavigation(dll);
+                if (nav.rfind("nav|", 0) == 0) {
+                    sawNav = true;
+                    minRemaining = std::min(minRemaining, std::atof(nav.c_str() + 4));
+                }
+                if (nav != lastNav && static_cast<int>(t) % 20 == 0) lastNav = nav;
+                const std::string st = devState(dll);
+                if (engaged && t > 2.5 && st.rfind("AUTOPILOT", 0) != 0) {
+                    endState = st;
+                    break;
+                }
+            }
+            if (endState.empty()) endState = devState(dll);
+            std::printf("navigation scenario: drove %.0f m, navigation %s, closest remaining %.0f m, last nav '%s' -> %s\n",
+                        driven, sawNav ? "active" : "never active", minRemaining, devNavigation(dll).c_str(),
+                        endState.c_str());
+            // Success: navigation engaged and the truck either arrived (stopped at the end
+            // of the route) or was still driving the route when time ran out.
+            navResult = sawNav && (minRemaining < 300.0 || endState.rfind("AUTOPILOT", 0) == 0) ? 0 : 1;
+            devRequest(static_cast<int>(PilotRequest::Cancel));
+        }
+    }
+
     if (g_device.input_active_callback) g_device.input_active_callback(0, g_device.callback_context);
     inShutdown();
     telShutdown();
     FreeLibrary(dll);
     std::printf("%d/%zu scenarios kept autopilot engaged; log: %s\n", static_cast<int>(starts.size()) - failures,
                 starts.size(), (dataDir / "logs" / "atspilot.log").string().c_str());
-    return failures == 0 ? 0 : 1;
+    if (navResult >= 0) std::printf("navigation scenario %s\n", navResult == 0 ? "passed" : "FAILED");
+    return failures == 0 && navResult <= 0 ? 0 : 1;
 }

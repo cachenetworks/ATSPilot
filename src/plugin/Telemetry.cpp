@@ -210,6 +210,15 @@ SCSAPI_VOID onEvent(const scs_event_t event, const void* const info, const scs_c
                     const auto* mass = findAttribute(cfg->attributes, SCS_TELEMETRY_CONFIG_ATTRIBUTE_cargo_mass, SCS_U32_NIL);
                     vc.cargoMassKg = mass ? mass->value.value_float.value : 0.0;
                     vc.hasJob = cfg->attributes && cfg->attributes->name != nullptr;
+                    auto str = [&](const char* name) {
+                        const auto* a = findAttribute(cfg->attributes, name, SCS_U32_NIL);
+                        return a && a->value.value_string.value ? std::string(a->value.value_string.value) : std::string();
+                    };
+                    vc.destinationCityId = str(SCS_TELEMETRY_CONFIG_ATTRIBUTE_destination_city_id);
+                    vc.destinationCompanyId = str(SCS_TELEMETRY_CONFIG_ATTRIBUTE_destination_company_id);
+                    vc.destinationCity = str(SCS_TELEMETRY_CONFIG_ATTRIBUTE_destination_city);
+                    rt->log().info("Job: deliver to {} ({}/{}), cargo {:.0f} kg", vc.destinationCity,
+                                   vc.destinationCityId, vc.destinationCompanyId, vc.cargoMassKg);
                 }
                 break;
             }

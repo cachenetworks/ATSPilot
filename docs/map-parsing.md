@@ -87,25 +87,67 @@ in the ground plane, then translate. All 1,737 descriptors used by the map parse
    orientations. Orientations pointing against the road are flipped, and sample
    density follows curvature.
 3. **Lane offsets (calibrated):** for every road look, ATSPilot measures where
-   the junction lanes start and end relative to the road's centre line, over
-   every road end that touches a prefab, and takes the per-lane median. 246
-   look sides are calibrated this way. Looks without enough samples fall back
-   to `road_offset/2 + (i + ½)·lane_width` (default lane width 4.5 m).
+   the junction lanes start and end relative to the road's centre line, at
+   every road end that touches a prefab. A road end counts only when exactly
+   one run of `laneCount` aligned junction lanes with lane-like spacing
+   (2.5–6 m) exists, so an extra ramp lane makes it ambiguous and it is
+   skipped. The per-lane median gives the offsets. 267 look sides are
+   calibrated. Uncalibrated looks fall back to
+   `road_offset/2 + (i + ½)·lane_width`, or to centred lanes for one-way looks
+   (default lane width 4.5 m).
+
+   **Finding:** for one-way carriageways the node line is **not** the inner
+   edge. A 3-lane "us 0-3 freeway" has lane centres at −6.75, −2.25 and +2.25 m
+   relative to its nodes. Offsets therefore have to be measured on both sides
+   of the node line. The first calibration ignored negative offsets, mis-placed
+   such roads, and fragmented the graph (24,227 missed links before the fix,
+   2,564 after).
 4. **Connections:** a lane end links to any lane start within 1.6 m and 30° of
    heading. This is purely geometric, so it does not depend on undocumented
    lane-index conventions.
-5. **Snapping:** the remaining offset between a road lane end and the junction
-   curve it joins is spread linearly along the road lane, so the graph is
-   continuous.
+5. **Gaps and merges:** a lane end with no successor links either to an
+   aligned start straight ahead (lateral ≤ 1.6 m, up to 25 m ahead), for
+   junction curves that begin past the node, or to the nearest aligned start
+   within 5 m (a merge or lane drop). The path builder turns any lateral gap
+   at a join into a smooth 60 m transition.
+6. **Snapping:** for regular joins only (≤ 1.6 m), the remaining offset
+   between a road lane end and its junction curve is spread along the road
+   lane. Blend factors are taken from the unmodified geometry. An earlier
+   version measured them on already-shifted points, which made geometry on
+   very short roads grow exponentially. The builder now also drops any
+   segment with non-finite or out-of-map coordinates (0 on 1.61).
+7. **Lane changes** are not stored as edges. Parallel lanes of the same road
+   and direction are found on demand (`laneNeighbors`) by the route planner.
 
-Diagnostics on 1.61:
+Diagnostics on 1.61 (`atspilot_mapdump build`):
 
-- 1,537,559 lane segments, 93.5% of lane ends connected.
-- Road–junction joins: 68% within 0.25 m. Larger gaps were analysed per look
-  and are **longitudinal** (the junction curve ends 1.1–1.5 m before the road
-  lane starts), with lateral error ≈ 0.
-- The unconnected ends are mostly dead ends (company yards, map edges) and
-  lane drops.
+- 1,537,559 lane segments; **97.2%** of lane ends connected; 973 merge and
+  758 gap links.
+- Road–junction joins: 71% within 0.25 m. Larger gaps are **longitudinal**
+  (the junction curve ends 1.1–1.5 m before the road lane starts), with
+  lateral error ≈ 0.
+- 20,523 road dead ends are genuine: the map node has nothing attached, as
+  with stubs or closed areas (verified with `atspilot_mapdump item`). 2,564
+  remain where the map continues but no lane link was found.
+- 230,857 prefab node placements checked: 1 off by more than 1 m.
+
+## Destinations and routing
+
+Company items (type 6: city token, prefab uid, company token, node uid) give
+2,186 depots on 1.61. Their tokens match the job configuration's
+`destination.city.id` and `destination.company.id`.
+
+**Finding:** most depot prefabs have no nav curves of their own. A depot is
+therefore reached through the lanes that end at its prefab nodes (the
+entrance). 2,106 depots resolve this way.
+
+`planRoute` runs A* over lane successors (cost: length) and lane changes
+(cost: 60 m by default) to any destination lane. Its straight-line heuristic,
+measured to the destination area, never overestimates. Examples on 1.61:
+Sacramento → Los Angeles 41.1 km in 12 ms; Sacramento → Houston 173.7 km in
+130 ms (365k expansions). Routing runs asynchronously on the planner thread,
+and is recalculated once the truck has been off the route (neither on it nor
+beside it) for 1 s.
 
 ## Cache
 

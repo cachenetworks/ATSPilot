@@ -153,6 +153,32 @@ TEST_CASE("pause disengages and resume restores the previous mode") {
     CHECK((rig.pilot.mode() == PilotMode::Off));
 }
 
+TEST_CASE("arriving at the destination entrance ends the drive") {
+    Rig rig;
+    auto snap = std::make_shared<PathSnapshot>();
+    snap->path = sim::makeStraight(60.0);
+    snap->navigationActive = true;
+    snap->routeRemaining = 300.0;
+    rig.path = snap;
+    rig.vehicle.reset({0.0, 0.0}, 0.0, 10.0);
+    rig.request(PilotRequest::ToggleAutopilot);
+    REQUIRE((rig.pilot.mode() == PilotMode::Autopilot));
+    // Still far from the end of the route: moving or not, keep driving.
+    double t = 0.0;
+    rig.step(t, t, t);
+    CHECK((rig.pilot.mode() == PilotMode::Autopilot));
+    // Close to the end and stopped: done.
+    auto arrived = std::make_shared<PathSnapshot>(*snap);
+    arrived->routeRemaining = 10.0;
+    VehicleState s = rig.state();
+    s.speed = 0.0;
+    s.time += 1.0 / 60.0;
+    t += 1.0 / 60.0;
+    rig.pilot.update(s, rig.vehicle.config(), arrived, t, t, t);
+    CHECK((rig.pilot.mode() == PilotMode::Off));
+    CHECK(rig.pilot.status().statusMessage == "Destination Reached");
+}
+
 TEST_CASE("inverted steering response is detected and disengages") {
     Rig rig;
     auto snap = std::make_shared<PathSnapshot>();

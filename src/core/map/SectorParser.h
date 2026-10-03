@@ -38,11 +38,20 @@ struct MapPrefab {
     std::uint64_t ferryLink = 0;
 };
 
+struct MapCompany {
+    std::uint64_t uid = 0;
+    std::uint64_t city = 0;      // token, matches the job's destination.city.id
+    std::uint64_t company = 0;   // token, matches the job's destination.company.id
+    std::uint64_t prefab = 0;    // company prefab item uid
+    std::uint64_t node = 0;
+};
+
 struct SectorData {
     std::uint32_t version = 0;
     std::vector<MapNode> nodes;
     std::vector<MapRoad> roads;
     std::vector<MapPrefab> prefabs;
+    std::vector<MapCompany> companies;
     std::size_t itemCount = 0;
 };
 

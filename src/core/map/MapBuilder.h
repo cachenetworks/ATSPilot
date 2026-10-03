@@ -47,6 +47,21 @@ struct MapBuildStats {
     std::vector<std::size_t> missGapHistogram = std::vector<std::size_t>(32, 0);
     std::size_t roadEndsUnconnected = 0;
     std::size_t lookSidesCalibrated = 0;
+    std::size_t companies = 0;
+    std::size_t destinations = 0;
+    std::size_t companiesPrefabMissing = 0;
+    std::size_t companiesNodeMissing = 0;
+    std::size_t companiesWithoutLanes = 0;
+    std::size_t mergeConnections = 0;  // sideways links into a neighbouring lane (<= 5 m)
+    std::size_t gapConnections = 0;
+    std::size_t roadDeadEndsInMap = 0;       // the map node has nothing else attached
+    std::size_t roadDeadEndsMissedLink = 0;  // the map node continues, but no lane link was made
+    std::vector<std::string> missedLinkSamples;    // straight-ahead links across a gap (<= 25 m)
+    std::size_t badSegments = 0;  // dropped for non-finite/out-of-range geometry
+    std::vector<std::string> badSegmentSamples;
+    std::size_t prefabNodeChecks = 0;
+    std::size_t prefabNodeMismatches = 0;
+    std::vector<std::string> prefabMismatchSamples;
     struct GapSample {
         std::string look;
         bool left = false;
@@ -56,7 +71,9 @@ struct MapBuildStats {
         double longitudinal = 0.0;
         bool roadEndsIntoPrefab = true;
     };
-    std::vector<GapSample> gapSamples;  // road<->prefab joins with gap > 0.75 m (first 5000)
+    std::vector<GapSample> gapSamples;   // road<->prefab joins with gap > 0.75 m (first 5000)
+    std::vector<GapSample> missSamples;  // unconnected road ends: nearest aligned prefab start
+    std::vector<std::string> calibrationDebug;  // with ATSPILOT_DEBUG_LOOK set
     std::vector<std::string> errors;  // first few, for logging
 };
 

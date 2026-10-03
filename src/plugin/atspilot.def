@@ -6,3 +6,4 @@ scs_input_init=scs_input_init
 scs_input_shutdown=scs_input_shutdown
 atspilot_dev_request=atspilot_dev_request
 atspilot_dev_state=atspilot_dev_state
+atspilot_dev_navigation=atspilot_dev_navigation

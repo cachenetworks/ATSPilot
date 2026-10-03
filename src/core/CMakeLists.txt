@@ -9,6 +9,7 @@ add_library(atspilot_core STATIC
   map/MapService.cpp
   map/PrefabDescription.cpp
   map/RoadNetwork.cpp
+  map/RoutePlanner.cpp
   map/SectorParser.cpp
   map/Sii.cpp
   map/Token.cpp

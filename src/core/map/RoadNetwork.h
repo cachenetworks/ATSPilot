@@ -45,10 +45,18 @@ struct LaneMatch {
     double s = 0.0;              // distance along the segment
 };
 
+// A company depot that jobs deliver to, with the lanes of its prefab.
+struct Destination {
+    std::uint64_t city = 0;     // token
+    std::uint64_t company = 0;  // token
+    Vec2 position;              // plan coordinates of the company node
+    std::vector<std::uint32_t> lanes;
+};
+
 // Lane-level road graph for the whole map with a uniform-grid spatial index.
 class RoadNetwork {
 public:
-    static constexpr std::uint32_t kFormatVersion = 1;
+    static constexpr std::uint32_t kFormatVersion = 2;
 
     std::uint32_t add(LaneSegment seg);
     void finalize();  // builds the spatial index and predecessor lists
@@ -57,6 +65,14 @@ public:
     std::size_t size() const { return segments_.size(); }
     const std::vector<LaneSegment>& segments() const { return segments_; }
     std::vector<LaneSegment>& mutableSegments() { return segments_; }
+
+    void addDestination(Destination d) { destinations_.push_back(std::move(d)); }
+    const std::vector<Destination>& destinations() const { return destinations_; }
+    const Destination* findDestination(std::uint64_t city, std::uint64_t company) const;
+
+    // Parallel lanes of the same road travelling the same way (laneIndex +-1),
+    // i.e. the lanes a lane change can move to.
+    std::vector<std::uint32_t> laneNeighbors(std::uint32_t id) const;
 
     // All lane matches within `radius` of p, nearest first.
     std::vector<LaneMatch> query(const Vec2& p, double radius) const;
@@ -74,6 +90,8 @@ private:
     }
 
     std::vector<LaneSegment> segments_;
+    std::vector<Destination> destinations_;
+    std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> roadLanes_;  // road item uid -> lanes
     std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> grid_;
 };
 
