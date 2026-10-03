@@ -1,0 +1,2 @@
+add_executable(atspilot_sim sim_main.cpp)
+target_link_libraries(atspilot_sim PRIVATE atspilot_core)
