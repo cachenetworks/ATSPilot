@@ -1,2 +1,5 @@
 add_executable(atspilot_sim sim_main.cpp)
 target_link_libraries(atspilot_sim PRIVATE atspilot_core)
+
+add_executable(atspilot_mapdump mapdump_main.cpp mapdump_map.cpp)
+target_link_libraries(atspilot_mapdump PRIVATE atspilot_core)
