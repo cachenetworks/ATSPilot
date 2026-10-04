@@ -16,9 +16,11 @@ enum class SpeedUnits { Mph, Kph };
 
 struct SpeedConfig {
     SpeedUnits units = SpeedUnits::Mph;
-    double maxSpeed = 65.0;        // in `units`; used until the player sets the game's cruise speed
+    double maxSpeed = 80.0;        // in `units`; never exceeded
     double limitOffset = 0.0;      // added to the posted limit, in `units`
-    bool followSpeedLimit = true;
+    bool followSpeedLimit = true;  // drive at the posted limit (never above it)
+    double unknownLimit = 45.0;    // in `units`; used before any limit has been posted
+    bool cruiseSetsMax = false;    // the game's cruise set speed also caps the speed
 };
 
 struct SteeringConfig {

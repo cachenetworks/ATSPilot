@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -32,6 +33,7 @@ struct WorldVehicle {
     double length = 4.5;
     double width = 1.9;
     double speed = 0.0;    // m/s along its heading
+    double height = std::numeric_limits<double>::quiet_NaN();  // bottom of the body, world up axis
 };
 
 struct WorldLight {

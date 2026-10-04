@@ -378,10 +378,20 @@ GameButtons Runtime::takeButtons() {
 OutputValues Runtime::currentOutput() {
     OutputValues out;
     if (!pilot_ || !command_.active) return out;
-    // Commands expire: a stalled control loop must never leave pedals or steering applied.
-    if (wallNow() - commandWall_ > config_.safety.commandTimeout) {
-        if (pilot_->mode() != PilotMode::Off) pilot_->disengage("Control loop stalled");
-        command_ = ControlCommand{};
+    // Commands expire: a stalled control loop must never leave pedals or steering
+    // applied. A game hitch (loading, alt-tab) pauses frames too, so a stale
+    // command right after one is not a fault: neutral output until the next frame
+    // computes a fresh command, and autopilot carries on. Only commands that stay
+    // stale while telemetry keeps arriving mean the loop itself has failed.
+    const double now = wallNow();
+    if (now - commandWall_ > config_.safety.commandTimeout) {
+        if (pilot_->mode() != PilotMode::Off && now - commandWall_ > 2.0 && now - lastTelemetryWall_ < 0.5) {
+            pilot_->disengage("Control loop stalled");
+            command_ = ControlCommand{};
+        } else if (now - lastHitchLog_ > 10.0) {
+            lastHitchLog_ = now;
+            log_.info("Game hitch: no frame for {:.2f} s, holding neutral until frames resume", now - commandWall_);
+        }
         return out;
     }
     // Direct steering bypasses the input mix entirely.

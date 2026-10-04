@@ -16,12 +16,13 @@ Path::Path(std::vector<PathPoint> points) : points_(std::move(points)) {
     }
 }
 
-void Path::append(const Vec2& p, double speedLimit, std::uint64_t segmentId) {
+void Path::append(const Vec2& p, double speedLimit, std::uint64_t segmentId, double height) {
     if (!points_.empty() && distance(points_.back().pos, p) < 1e-3) return;
     PathPoint pp;
     pp.pos = p;
     pp.speedLimit = speedLimit;
     pp.segmentId = segmentId;
+    pp.height = height;
     pp.s = points_.empty() ? 0.0 : points_.back().s + distance(points_.back().pos, p);
     points_.push_back(pp);
 }
@@ -95,6 +96,17 @@ double Path::speedLimitAt(double s) const {
     return points_[segmentIndexAt(s)].speedLimit;
 }
 
+double Path::heightAt(double s) const {
+    if (points_.empty()) return std::numeric_limits<double>::quiet_NaN();
+    if (points_.size() == 1) return points_[0].height;
+    const std::size_t i = segmentIndexAt(s);
+    const PathPoint& a = points_[i];
+    const PathPoint& b = points_[i + 1];
+    const double segLen = b.s - a.s;
+    const double t = segLen > 1e-9 ? clamp((s - a.s) / segLen, 0.0, 1.0) : 0.0;
+    return a.height + (b.height - a.height) * t;
+}
+
 double Path::curvatureAt(double s, double span) const {
     if (!valid()) return 0.0;
     const double s0 = std::max(0.0, s - span);
@@ -110,11 +122,13 @@ Path Path::trimmed(double from, double to) const {
     from = std::max(0.0, from);
     to = std::min(length(), to);
     if (to <= from) return out;
-    out.append(positionAt(from), points_[segmentIndexAt(from)].speedLimit, points_[segmentIndexAt(from)].segmentId);
+    out.append(positionAt(from), points_[segmentIndexAt(from)].speedLimit, points_[segmentIndexAt(from)].segmentId,
+               heightAt(from));
     for (const auto& p : points_) {
-        if (p.s > from && p.s < to) out.append(p.pos, p.speedLimit, p.segmentId);
+        if (p.s > from && p.s < to) out.append(p.pos, p.speedLimit, p.segmentId, p.height);
     }
-    out.append(positionAt(to), points_[segmentIndexAt(to)].speedLimit, points_[segmentIndexAt(to)].segmentId);
+    out.append(positionAt(to), points_[segmentIndexAt(to)].speedLimit, points_[segmentIndexAt(to)].segmentId,
+               heightAt(to));
     return out;
 }
 
@@ -124,9 +138,9 @@ Path Path::resampled(double spacing) const {
     const double len = length();
     for (double s = 0.0; s < len; s += spacing) {
         const std::size_t i = segmentIndexAt(s);
-        out.append(positionAt(s), points_[i].speedLimit, points_[i].segmentId);
+        out.append(positionAt(s), points_[i].speedLimit, points_[i].segmentId, heightAt(s));
     }
-    out.append(points_.back().pos, points_.back().speedLimit, points_.back().segmentId);
+    out.append(points_.back().pos, points_.back().speedLimit, points_.back().segmentId, points_.back().height);
     return out;
 }
 

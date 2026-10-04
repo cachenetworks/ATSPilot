@@ -64,6 +64,15 @@ double arrivalTime(double d, double speed, double accel) {
     return (-speed + std::sqrt(speed * speed + 2.0 * accel * d)) / accel;
 }
 
+// Whether a vehicle is on a different level from the road at s: the path's
+// height comes from the map, the vehicle's from game memory. Unknown heights
+// never exclude a vehicle.
+bool otherLevel(const Path& path, double s, const WorldVehicle& v, const TrafficParams& p) {
+    const double road = path.heightAt(s);
+    if (std::isnan(road) || std::isnan(v.height)) return false;
+    return std::abs(v.height - road) > p.levelSeparation;
+}
+
 }  // namespace
 
 TrafficPicture assessTraffic(const Path& path, double frontS, double speed, const std::vector<WorldVehicle>& vehicles,
@@ -87,6 +96,8 @@ TrafficPicture assessTraffic(const Path& path, double frontS, double speed, cons
 
         const auto centre = path.project(v.position);
         if (!centre) continue;
+        // On a bridge over the path or a road under it: not in the way.
+        if (otherLevel(path, centre->s, v, p)) continue;
         // The footprint points already include the vehicle's own width.
         const double halfWidth = p.corridorHalfWidth;
         const double pathYaw = path.yawAt(centre->s);
@@ -115,6 +126,7 @@ TrafficPicture assessTraffic(const Path& path, double frontS, double speed, cons
             const Vec2 c = v.position + direction(v.yaw) * (v.speed * t);
             const auto pr = path.project(c);
             if (!pr) continue;
+            if (otherLevel(path, pr->s, v, p)) break;
             const Occupancy later = occupancy(path, footprint(c, v.yaw, v.length, v.width), pr->index, halfWidth);
             if (!later.inCorridor || later.sMax <= frontS || later.sMin >= sEnd) continue;
             const double meetS = std::max(later.sMin, frontS);

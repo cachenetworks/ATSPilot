@@ -99,6 +99,7 @@ ConfigLoadResult loadConfig(const std::string& text) {
     const NumberBinding numbers[] = {
         {"speed", "max", &c.speed.maxSpeed, 5.0, 130.0},
         {"speed", "limit_offset", &c.speed.limitOffset, -30.0, 30.0},
+        {"speed", "unknown_limit", &c.speed.unknownLimit, 5.0, 130.0},
         {"steering", "lookahead_base_m", &c.steering.lateral.lookaheadBase, 2.0, 80.0},
         {"steering", "lookahead_speed_factor", &c.steering.lateral.lookaheadSpeedFactor, 0.0, 3.0},
         {"steering", "lookahead_min_m", &c.steering.lateral.lookaheadMin, 2.0, 80.0},
@@ -162,6 +163,7 @@ ConfigLoadResult loadConfig(const std::string& text) {
     const BoolBinding bools[] = {
         {"autopilot", "enabled", &c.autopilotEnabled},
         {"speed", "follow_speed_limit", &c.speed.followSpeedLimit},
+        {"speed", "cruise_sets_max", &c.speed.cruiseSetsMax},
         {"steering", "learn_steering_ratio", &c.steering.learnSteeringRatio},
         {"safety", "driver_override", &c.safety.driverOverride},
         {"map", "enabled", &c.map.enabled},
@@ -286,9 +288,11 @@ name = "auto"               # auto (heavy_haul above 25 t), comfort, normal, ass
 
 [speed]
 units = "mph"               # "mph" or "kph"
-max = 65                    # used until you set the game's cruise control speed
-limit_offset = 0            # added to the navigation speed limit
-follow_speed_limit = true   # never exceed the limit reported by the in-game navigation
+max = 80                    # never driven faster than this
+limit_offset = 0            # added to the posted speed limit
+follow_speed_limit = true   # drive at the posted speed limit
+unknown_limit = 45          # used until a speed limit has been posted
+cruise_sets_max = false     # true: the game's cruise set speed (+/-) also caps the speed
 
 [ingame]
 use_cruise_control = true   # hold speed with the game's cruise control (its adaptive cruise handles traffic)

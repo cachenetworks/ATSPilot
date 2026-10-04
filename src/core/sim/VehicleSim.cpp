@@ -80,6 +80,7 @@ VehicleState VehicleSim::state() const {
     s.effectiveBrake = s.inputBrake;
     s.steerableWheelAngle = wheel_;
     s.cruiseControlSpeed = cruiseSet_;
+    s.navigationSpeedLimit = speedLimit_;
     s.blinkerLeft = blinkerLeft_ || indicatorHeld_ > 0;
     s.blinkerRight = blinkerRight_ || indicatorHeld_ < 0;
     s.gear = v_ > 0.1 ? 6 : 1;

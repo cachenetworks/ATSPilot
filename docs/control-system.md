@@ -56,8 +56,9 @@ geometry at speed. `a_lat` starts at 1.6 m/s² and is multiplied by
 - down to ×0.75 for cargo above 15 t
 - ×0.85 when the wipers run
 
-The target is then capped by the set speed and, if enabled, the navigation
-speed limit plus offset.
+The target is the posted navigation speed limit plus offset, capped by
+`speed.max`. Where no limit is reported the last one still applies. Before any
+limit has been seen, `speed.unknown_limit` (45 mph) is used.
 
 ## Longitudinal control
 
@@ -122,8 +123,9 @@ result back from `truck.cruise_control`:
 - Above it, it presses the toggle once and then nudges the set speed towards
   the planned target. Presses are at least 0.25 s apart. While cruise control
   is on, ATSPilot sends no throttle or brake.
-- A set-speed change that ATSPilot did not cause is the player's: it becomes
-  the maximum speed.
+- A set-speed change that ATSPilot did not cause is the player's. With
+  `speed.cruise_sets_max` it becomes the maximum speed; by default it is
+  ignored and the set speed returns to the limit.
 - When the plan needs more than 1.5 m/s of extra braking (sharp curves, stop
   lines), ATSPilot brakes itself, which cancels the cruise control as it would
   for a driver. Cruise control is switched back on afterwards.
@@ -195,9 +197,17 @@ traffic lights every frame. `assessTraffic` turns them into speed constraints:
 - **Crossing:** vehicles more than 30° off the path direction are extrapolated
   for up to 4 s. If one would occupy the corridor ahead about when the truck
   gets there (within 2.5 s), it is treated as stopped at that point.
+- **Other levels:** a vehicle whose height is more than 3.5 m from the road
+  surface at its spot on the path is on a bridge above or a road below, and is
+  ignored. Road heights come from the map, so hills do not trigger this.
 - **Hard braking:** if stopping behind the nearest obstacle needs more than
   2.5 m/s², ATSPilot brakes directly in proportion instead of waiting for the
-  speed loop.
+  speed loop. For a crossing that is only predicted, the prediction must hold
+  for 0.4 s first, unless it is within 15 m.
+
+A game hitch (loading, alt-tab) is not a fault. Output goes neutral until frames
+resume, and the path from before the hitch stays usable for `path_timeout_s`
+afterwards. Autopilot carries on rather than switching off.
 
 Signal lanes carry their prefab's semaphore id (`LaneSegment::semaphoreId`).
 The live light with that id nearest the stop line decides:

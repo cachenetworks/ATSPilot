@@ -92,8 +92,10 @@ TEST_CASE("speed is handed to the game's cruise control, which ATSPilot switches
     CHECK(c.brake == 0.0);
 }
 
-TEST_CASE("the player's cruise control speed becomes the maximum ATSPilot drives") {
-    Rig rig;
+TEST_CASE("with cruise_sets_max the player's cruise control speed becomes the maximum ATSPilot drives") {
+    Config cfg;
+    cfg.speed.cruiseSetsMax = true;
+    Rig rig(cfg);
     rig.toggle();
     // Let ATSPilot bring the cruise control up to its target first.
     for (int k = 0; k < 60 * 25; ++k) rig.step();
@@ -109,6 +111,23 @@ TEST_CASE("the player's cruise control speed becomes the maximum ATSPilot drives
     for (int k = 0; k < 120; ++k) rig.step();
     CHECK(rig.pilot.setSpeed() == doctest::Approx(playerSet).epsilon(0.02));
     CHECK(rig.vehicle.cruiseSet() == doctest::Approx(playerSet).epsilon(0.02));
+}
+
+TEST_CASE("by default ATSPilot drives at the posted limit whatever the cruise set speed") {
+    Rig rig;
+    rig.vehicle.setSpeedLimit(25.0);
+    rig.toggle();
+    for (int k = 0; k < 60 * 25; ++k) rig.step();
+    REQUIRE(rig.vehicle.cruiseSet() > 0.0);
+    ControlCommand player;
+    player.buttons.cruiseDec = true;
+    for (int k = 0; k < 5; ++k) {
+        rig.vehicle.step(player, 1.0 / 60.0);
+        rig.vehicle.step(ControlCommand{}, 1.0 / 60.0);
+    }
+    for (int k = 0; k < 60 * 20; ++k) rig.step();
+    CHECK(rig.vehicle.cruiseSet() == doctest::Approx(25.0).epsilon(0.03));
+    CHECK(rig.state().speed == doctest::Approx(25.0).epsilon(0.05));
 }
 
 TEST_CASE("ATSPilot lowers the cruise set speed for a sharp curve and restores it afterwards") {
@@ -374,4 +393,23 @@ TEST_CASE("inverted steering response is detected and disengages") {
     }
     CHECK((rig.pilot.mode() == PilotMode::Off));
     CHECK(rig.pilot.status().statusMessage == "Steering direction mismatch");
+}
+
+TEST_CASE("a game hitch longer than the path timeout does not stop the truck") {
+    Rig rig;
+    rig.toggle();
+    for (int k = 0; k < 120; ++k) rig.step();
+    // No frames for 2 s of wall time (loading, alt-tab); the path was last
+    // published just before the hitch.
+    const double pathWall = rig.t;
+    rig.t += 2.0;
+    for (int k = 0; k < 30; ++k) {
+        rig.t += 1.0 / 60.0;
+        const ControlCommand c = rig.pilot.update(rig.state(), rig.vehicle.config(), rig.path, rig.t, rig.t, pathWall);
+        rig.vehicle.step(c, 1.0 / 60.0);
+    }
+    CHECK((rig.pilot.mode() == PilotMode::Autopilot));
+    // Fresh paths resume and driving carries on.
+    for (int k = 0; k < 60; ++k) rig.step();
+    CHECK((rig.pilot.mode() == PilotMode::Autopilot));
 }

@@ -65,6 +65,26 @@ TEST_CASE("crossing traffic is a conflict only when the truck would meet it") {
     CHECK(assessTraffic(path, 10.0, 20.0, {car(60.0, -20.0, 0.5 * kPi, 0.0)}, p).constraints.empty());
 }
 
+TEST_CASE("traffic on a bridge over the path or a road under it is ignored") {
+    Path path;
+    for (int i = 0; i <= 100; ++i) path.append({i * 5.0, 0.0}, 0.0, 0, 100.0 + 0.02 * i * 5.0);  // 2% climb
+    const TrafficParams p;
+    // Crossing on a bridge 7 m above the road.
+    WorldVehicle above = car(60.0, -20.0, 0.5 * kPi, 10.0);
+    above.height = 100.0 + 0.02 * 60.0 + 7.0;
+    CHECK(assessTraffic(path, 10.0, 20.0, {above}, p).constraints.empty());
+    // Stopped in the lane, on a road passing 8 m below.
+    WorldVehicle below = car(60.0, 0.0, 0.5 * kPi, 0.0);
+    below.height = 100.0 + 0.02 * 60.0 - 8.0;
+    CHECK(assessTraffic(path, 10.0, 20.0, {below}, p).constraints.empty());
+    // The same crossing at road level, up the hill 4 m above the truck, still counts.
+    WorldVehicle level = car(200.0, -20.0, 0.5 * kPi, 10.0);
+    level.height = 100.0 + 0.02 * 200.0;
+    CHECK_FALSE(assessTraffic(path, 150.0, 20.0, {level}, p).constraints.empty());
+    // Unknown height: never excluded.
+    CHECK_FALSE(assessTraffic(path, 10.0, 20.0, {car(60.0, -20.0, 0.5 * kPi, 10.0)}, p).constraints.empty());
+}
+
 TEST_CASE("a signal stop is matched to the nearest light with its semaphore id") {
     const Path path = sim::makeStraight(500.0);
     PathStop stop;

@@ -111,6 +111,7 @@ void addBody(const prism::traffic_actor_t* a, int id, double speed, const Vec2& 
     v.length = std::abs(bb.end.z - bb.start.z);
     v.width = std::abs(bb.end.x - bb.start.x);
     v.speed = speed;
+    v.height = centre.y - 0.5 * std::abs(bb.end.y - bb.start.y);
     if (!(v.length > 0.5 && v.length < 40.0 && v.width > 0.5 && v.width < 6.0)) return;  // implausible: skip
     out.push_back(v);
 }

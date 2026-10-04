@@ -150,6 +150,7 @@ void Autopilot::engage(const VehicleState& s) {
     waitingStop_.reset();
     tapStart_ = -1.0;
     setSpeed_ = speedToMps(eff_.speed.maxSpeed, eff_.speed.units);
+    cruiseIgnoredLogged_ = false;
 
     setMessage("Autopilot Engaged");
     if (log_) {
@@ -227,10 +228,14 @@ void Autopilot::learnSteeringRatio(const VehicleState& s) {
     maxWheelAngle_ += (ratio - maxWheelAngle_) * 0.01;
 }
 
-double Autopilot::cruiseTarget(const VehicleState& s) const {
+double Autopilot::cruiseTarget(const VehicleState& s) {
     double target = setSpeed_;
-    if (eff_.speed.followSpeedLimit && s.navigationSpeedLimit > 0.5) {
-        target = std::min(target, s.navigationSpeedLimit + speedToMps(eff_.speed.limitOffset, eff_.speed.units));
+    if (eff_.speed.followSpeedLimit) {
+        // The posted limit; where none is reported (some junctions, depots) the
+        // last one still applies, and before any has been seen a moderate default.
+        if (s.navigationSpeedLimit > 0.5) lastLimit_ = s.navigationSpeedLimit;
+        const double limit = lastLimit_ > 0.0 ? lastLimit_ : speedToMps(eff_.speed.unknownLimit, eff_.speed.units);
+        target = std::min(target, limit + speedToMps(eff_.speed.limitOffset, eff_.speed.units));
     }
     return std::max(0.0, target);
 }
@@ -362,6 +367,18 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
     double dt = lastTime_ < 0.0 ? 1.0 / 60.0 : s.time - lastTime_;
     lastTime_ = s.time;
     dt = clamp(dt, 0.0, 0.1);
+
+    // After a game hitch (no frames for a while) the planning thread needs a
+    // moment to catch up; a path that was fresh when the hitch began stays
+    // usable meanwhile instead of counting as lost.
+    if (lastUpdateWall_ > -1e8 && wallNow - lastUpdateWall_ > 0.3) {
+        hitchFrom_ = lastUpdateWall_;
+        hitchUntil_ = wallNow + eff_.safety.pathTimeout;
+    }
+    lastUpdateWall_ = wallNow;
+    if (wallNow < hitchUntil_ && hitchFrom_ - pathWall <= eff_.safety.pathTimeout) {
+        pathWall = std::max(pathWall, wallNow - 0.5 * eff_.safety.pathTimeout);
+    }
 
     if (vc.valid || vc.cargoMassKg > 0.0) updateProfile(vc);
     status_.telemetryConnected = s.valid;
@@ -577,8 +594,23 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
                     status_.leadSpeed = traffic.nearest->speed;
                 }
                 // More than comfortable braking needed: brake directly rather than
-                // waiting for the speed loop to catch up.
-                if (traffic.requiredDecel > 2.5) strongBrake = clamp(traffic.requiredDecel / 7.0, 0.35, 0.9);
+                // waiting for the speed loop to catch up. A crossing that is only
+                // predicted must persist briefly first (unless close), so one odd
+                // reading never slams the brakes on.
+                if (traffic.requiredDecel > 2.5) {
+                    strongBrake = clamp(traffic.requiredDecel / 7.0, 0.35, 0.9);
+                    if (traffic.nearest->crossing) {
+                        if (traffic.nearest->id != crossingId_) {
+                            crossingId_ = traffic.nearest->id;
+                            crossingSince_ = s.time;
+                        }
+                        if (s.time - crossingSince_ < 0.4 && traffic.nearest->s - frontS > 15.0) strongBrake = 0.0;
+                    } else {
+                        crossingId_ = -1;
+                    }
+                } else {
+                    crossingId_ = -1;
+                }
             }
             const bool junctionBusy = traffic.nearest && traffic.nearest->s - frontS < 40.0;
 
@@ -726,14 +758,21 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
         if (eff_.ingame.useCruiseControl) {
             const auto out = cruise_.update(s.time, s.speed, s.cruiseControlSpeed, target, wantBrake,
                                             last_.brake > 0.02);
-            if (out.playerSetSpeed) {
-                setSpeed_ = std::max(2.0, out.playerSpeed);
+            if (out.playerSetSpeed && eff_.speed.cruiseSetsMax) {
+                setSpeed_ = std::min(std::max(2.0, out.playerSpeed), speedToMps(eff_.speed.maxSpeed, eff_.speed.units));
                 status_.setSpeed = setSpeed_;
                 if (log_) {
                     log_->info("Maximum speed {:.0f} {} (game cruise control)",
                                mpsToSpeed(setSpeed_, eff_.speed.units), unitLabel(eff_.speed.units));
                 }
                 emit(PilotEvent::SetSpeedChanged, "Set speed changed");
+            } else if (out.playerSetSpeed && !cruiseIgnoredLogged_) {
+                cruiseIgnoredLogged_ = true;
+                if (log_) {
+                    log_->info("Driving at the posted speed limit; the game's cruise set speed ({:.0f} {}) is not a "
+                               "maximum (speed.cruise_sets_max)",
+                               mpsToSpeed(out.playerSpeed, eff_.speed.units), unitLabel(eff_.speed.units));
+                }
             }
             if (out.cancelledExternally) {
                 // The game switched its cruise control off on its own (driver input,

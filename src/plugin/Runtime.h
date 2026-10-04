@@ -132,6 +132,7 @@ private:
 
     ControlCommand command_;
     double commandWall_ = -1e9;
+    double lastHitchLog_ = -1e9;
     GameButtons pendingButtons_;
 
     struct Hotkey {

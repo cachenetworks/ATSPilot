@@ -46,6 +46,7 @@ public:
     double speed() const { return v_; }
     double time() const { return t_; }
     double cruiseSet() const { return cruiseSet_; }
+    void setSpeedLimit(double mps) { speedLimit_ = mps; }  // reported as the navigation speed limit
     // Lead-vehicle style slowdown of the game's (adaptive) cruise control for tests:
     // while set, cruise holds at most this speed.
     void setCruiseCap(double v) { cruiseCap_ = v; }
@@ -70,6 +71,7 @@ private:
     bool blinkerLeft_ = false;
     bool blinkerRight_ = false;
     int indicatorHeld_ = 0;  // the game's hold-type signal controls
+    double speedLimit_ = 0.0;
     int quickParks_ = 0;
 };
 

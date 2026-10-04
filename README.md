@@ -18,7 +18,7 @@ controlled with **one key**.
 |---|---|
 | **One key** | `F9` switches ATSPilot on and off. Braking, steering or the throttle take over immediately. |
 | **Steering** | Pure Pursuit along the lane centre from the parsed map, written directly to the truck's steering. The lookahead shrinks in tight curves, so city turns are tracked to about 0.4 m. |
-| **Speed** | Switches on the game's cruise control and nudges its set speed with the game's +/- controls. It slows for curves, speed limits, traffic and stops. Your own cruise +/- presses set the maximum speed. Below cruise-control speed, and to brake, it uses its own pedals. |
+| **Speed** | Switches on the game's cruise control and nudges its set speed with the game's +/- controls. It slows for curves, speed limits, traffic and stops. It drives at the posted speed limit (`speed.max` is a ceiling). Below cruise-control speed, and to brake, it uses its own pedals. |
 | **Traffic** | Sees the AI traffic around the truck. It follows the vehicle ahead at a 2 s gap and queues behind stopped vehicles. It waits for crossing traffic it would meet at a junction, and brakes hard if something cuts in. |
 | **Traffic lights** | Reads each light's state. It stops on red, stops for amber when there is room, and goes on green, with no input from you. A light it cannot read is treated as an all-way stop. |
 | **Junctions** | Stops fully at stop signs, then pulls away once crossing traffic has cleared. Slows through give-way lanes and railway crossings. It never routes through truck-prohibited lanes. |
@@ -86,7 +86,8 @@ controls.
 1. Optionally take a job. ATSPilot will route to its depot and stop at the
    entrance.
 2. Drive onto a road, settle in a lane, and press **F9**.
-3. Set your maximum speed with the **game's cruise control +/- keys**.
+3. ATSPilot drives at the posted speed limit. Your cruise +/- presses do not
+   cap it unless you set `cruise_sets_max = true` under `[speed]`.
 4. ATSPilot obeys traffic lights and stop signs by itself. Only without game
    memory does it stop at lights and wait: then **tap the throttle** to go.
    Holding the throttle means you are taking over.
@@ -102,7 +103,7 @@ documented defaults on first start:
 
 - `[controls]`: the single key
 - `[profile]`
-- `[speed]`: units, default maximum, speed-limit following
+- `[speed]`: units, ceiling, speed-limit following, limit before one is posted
 - `[ingame]`: use game cruise control, blinkers, quick-park
 - `[memory]`: game-memory features (steering, traffic, lights, GPS route)
 - `[traffic]`: following gap, standstill gap, amber-light braking limit

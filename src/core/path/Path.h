@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -14,6 +16,7 @@ struct PathPoint {
     double s = 0.0;           // arc length from the first point, metres
     double speedLimit = 0.0;  // m/s, 0 = unknown
     std::uint64_t segmentId = 0;
+    double height = std::numeric_limits<double>::quiet_NaN();  // road surface, world up axis; NaN = unknown
 };
 
 struct PathProjection {
@@ -31,7 +34,8 @@ public:
     Path() = default;
     explicit Path(std::vector<PathPoint> points);
 
-    void append(const Vec2& p, double speedLimit = 0.0, std::uint64_t segmentId = 0);
+    void append(const Vec2& p, double speedLimit = 0.0, std::uint64_t segmentId = 0,
+                double height = std::numeric_limits<double>::quiet_NaN());
 
     bool valid() const { return points_.size() >= 2 && length() > 0.1; }
     std::size_t size() const { return points_.size(); }
@@ -47,6 +51,8 @@ public:
     Vec2 positionAt(double s) const;
     double yawAt(double s) const;
     double speedLimitAt(double s) const;
+    // Road surface height at s, NaN where the path carries none.
+    double heightAt(double s) const;
     // Signed curvature (1/m) estimated from points spaced `span` metres apart around s.
     double curvatureAt(double s, double span = 10.0) const;
 

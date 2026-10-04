@@ -181,7 +181,7 @@ Path smoothJogs(const Path& path) {
         pos = std::move(next);
     }
     Path out;
-    for (std::size_t i = 0; i < n; ++i) out.append(pos[i], pts[i].speedLimit, pts[i].segmentId);
+    for (std::size_t i = 0; i < n; ++i) out.append(pos[i], pts[i].speedLimit, pts[i].segmentId, pts[i].height);
     return out;
 }
 
@@ -328,6 +328,7 @@ PlannedPath buildPlannedPath(const RoadNetwork& net, const LaneMatch& start, con
     // with a smooth lateral blend into the parallel lane; lanes of one road share
     // their sampling, so point j of one lane sits beside point j of the other.
     std::vector<Vec2> pts;
+    std::vector<double> heights;  // road surface height per point
     std::vector<std::uint32_t> ids;
     std::vector<std::pair<std::size_t, Vec2>> joins;  // index of the first point after a join, gap vector
     double truckS = 0.0;
@@ -460,6 +461,7 @@ PlannedPath buildPlannedPath(const RoadNetwork& net, const LaneMatch& start, con
         for (const auto& p : seg.points) {
             if (!pts.empty() && distance(pts.back(), p.plan()) < 1e-3) continue;
             pts.push_back(p.plan());
+            heights.push_back(p.height);
             ids.push_back(out.chain[c]);
         }
     }
@@ -481,7 +483,7 @@ PlannedPath buildPlannedPath(const RoadNetwork& net, const LaneMatch& start, con
     }
 
     Path raw;
-    for (std::size_t i = 0; i < pts.size(); ++i) raw.append(pts[i], 0.0, ids[i]);
+    for (std::size_t i = 0; i < pts.size(); ++i) raw.append(pts[i], 0.0, ids[i], heights[i]);
     // Keep only `behind` metres before the truck so the truck sits near the start of
     // the path, where the controller's windowed projection begins searching.
     const double from = std::max(0.0, truckS - params.behind);

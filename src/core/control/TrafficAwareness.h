@@ -20,6 +20,7 @@ struct TrafficParams {
     double startAccel = 1.0;         // m/s², assumed when estimating our arrival time from low speed
     double lightMatchRadius = 60.0;  // m between a stop line and its traffic light
     double amberMaxDecel = 3.0;      // m/s²: an amber light needing more braking than this is passed
+    double levelSeparation = 3.5;    // m of height between a vehicle and the road: another level (bridges)
 };
 
 // Something on, or about to cross, the truck's path.

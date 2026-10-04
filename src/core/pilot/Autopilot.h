@@ -78,7 +78,7 @@ private:
     void enterEmergency(const std::string& reason);
     void learnSteeringRatio(const VehicleState& s);
     void updateProfile(const VehicleConfig& vc);
-    double cruiseTarget(const VehicleState& s) const;
+    double cruiseTarget(const VehicleState& s);
     void setMessage(const std::string& msg);
     void emit(PilotEvent e, const std::string& msg);
     GameButtons blinkers(const VehicleState& s, const PathSnapshotPtr& path, double time);
@@ -97,7 +97,14 @@ private:
     std::function<void(PilotEvent, const std::string&)> onEvent_;
 
     PilotMode mode_ = PilotMode::Off;
-    double setSpeed_ = 0.0;  // m/s, the maximum: config default, then the player's cruise-control speed
+    double setSpeed_ = 0.0;  // m/s, the maximum: speed.max (or the player's cruise speed with cruise_sets_max)
+    double lastLimit_ = 0.0; // m/s, the last posted speed limit reported
+    bool cruiseIgnoredLogged_ = false;
+    int crossingId_ = -1;        // crossing vehicle currently calling for strong braking
+    double crossingSince_ = 0.0;
+    double lastUpdateWall_ = -1e9;  // wall time of the previous update (hitch detection)
+    double hitchFrom_ = -1e9;
+    double hitchUntil_ = -1e9;
     double lastTime_ = -1.0;
     double maxWheelAngle_ = 0.6;
     int invertedSteeringFrames_ = 0;
