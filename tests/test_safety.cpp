@@ -59,6 +59,21 @@ TEST_CASE("learned exclusive mixing attributes all reported input to the driver"
     CHECK((d.update(s, steerCmd(0.3)) == OverrideKind::Steering));
 }
 
+TEST_CASE("steering held at engagement only overrides when the driver moves beyond it") {
+    SafetyConfig cfg;
+    OverrideDetector d(cfg);
+    d.reset(0.5);
+    VehicleState s;
+    for (double held = 0.5; held > 0.0; held -= 0.02) {  // re-centring
+        s.inputSteering = held;
+        CHECK((d.update(s, steerCmd(0.0)) == OverrideKind::None));
+    }
+    s.inputSteering = -0.3;  // a fresh move the other way
+    d.update(s, steerCmd(0.0));
+    d.update(s, steerCmd(0.0));
+    CHECK((d.update(s, steerCmd(0.0)) == OverrideKind::Steering));
+}
+
 TEST_CASE("brake pedal overrides immediately") {
     SafetyConfig cfg;
     OverrideDetector d(cfg);

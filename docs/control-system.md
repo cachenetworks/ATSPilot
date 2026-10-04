@@ -78,7 +78,7 @@ preload.
 | Check | Threshold (default) | Action |
 |---|---|---|
 | Driver brake | > 0.10 beyond ATSPilot's own | disengage |
-| Driver steering | > 0.20 for 3 frames | disengage |
+| Driver steering | > 0.20 beyond what was held at engagement, for 3 frames | disengage |
 | Driver throttle | > 0.30 for 5 frames | disengage |
 | Telemetry age | > 0.5 s | disengage |
 | Path age | > 1.5 s | emergency stop |

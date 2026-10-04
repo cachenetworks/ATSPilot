@@ -24,12 +24,16 @@ public:
     explicit OverrideDetector(const SafetyConfig& cfg) : cfg_(cfg) {}
 
     void setConfig(const SafetyConfig& cfg) { cfg_ = cfg; }
-    void reset();
+    // `driverSteering` is the steering the driver already holds when ATSPilot takes
+    // over (the game keeps keyboard steering where it was). It only counts as an
+    // override once the driver moves beyond it.
+    void reset(double driverSteering = 0.0);
 
     OverrideKind update(const VehicleState& s, const ControlCommand& previous);
 
     InputMixing steeringMixing() const { return steerMixing_; }
     double driverSteering() const { return driverSteer_; }
+    double steeringBaseline() const { return steerBaseline_; }
 
 private:
     double driverInput(double reported, double commanded, InputMixing mixing) const;
@@ -43,6 +47,7 @@ private:
     int steerFrames_ = 0;
     int throttleFrames_ = 0;
     double driverSteer_ = 0.0;
+    double steerBaseline_ = 0.0;
 };
 
 // Verifies that every input the control loop relies on is fresh.

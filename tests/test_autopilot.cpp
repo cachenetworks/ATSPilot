@@ -192,6 +192,37 @@ TEST_CASE("driver braking disengages autopilot") {
     CHECK(rig.pilot.status().statusMessage.find("Driver Override") == 0);
 }
 
+TEST_CASE("steering the driver still holds at engagement is not an override") {
+    // In game: engaged at a junction with the wheels turned. The game keeps the
+    // driver's keyboard steering and re-centres it, and reports it plus ours.
+    Rig rig;
+    VehicleState s = rig.state();
+    double held = 0.45;
+    s.inputSteering = held;
+    s.effectiveSteering = held;
+    rig.pilot.request(PilotRequest::Toggle, s, rig.vehicle.config(), rig.path, rig.t, rig.t);
+    REQUIRE((rig.pilot.mode() == PilotMode::Autopilot));
+    double ours = 0.0;
+    for (int k = 0; k < 90; ++k) {
+        held = std::max(0.0, held - 0.6 / 60.0);
+        s.time += 1.0 / 60.0;
+        s.inputSteering = held + ours;
+        s.effectiveSteering = held + ours;
+        const ControlCommand c = rig.stepWith(s);
+        if (k == 0) CHECK(std::abs(c.steering) < 0.05);  // not the held angle again
+        ours = c.steering;
+    }
+    CHECK((rig.pilot.mode() == PilotMode::Autopilot));
+
+    // Steering beyond what was held is still a takeover.
+    for (int k = 0; k < 5; ++k) {
+        s.time += 1.0 / 60.0;
+        s.inputSteering = ours - 0.4;
+        rig.stepWith(s);
+    }
+    CHECK(rig.pilot.status().statusMessage == "Driver Override (steering)");
+}
+
 TEST_CASE("pause disengages") {
     Rig rig;
     rig.toggle();

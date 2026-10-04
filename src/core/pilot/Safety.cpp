@@ -1,5 +1,6 @@
 #include "pilot/Safety.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace atspilot {
@@ -14,10 +15,11 @@ const char* toString(OverrideKind k) {
     return "?";
 }
 
-void OverrideDetector::reset() {
+void OverrideDetector::reset(double driverSteering) {
     steerFrames_ = 0;
     throttleFrames_ = 0;
-    driverSteer_ = 0.0;
+    driverSteer_ = driverSteering;
+    steerBaseline_ = std::abs(driverSteering);
 }
 
 void OverrideDetector::learnMixing(double reported, double commanded, InputMixing& mixing, int& includeVotes,
@@ -63,7 +65,11 @@ OverrideKind OverrideDetector::update(const VehicleState& s, const ControlComman
     // a single noisy sample cannot disengage the pilot.
     if (driverBrake > cfg_.brakeOverrideThreshold) return OverrideKind::Brake;
 
-    steerFrames_ = std::abs(driverSteer_) > cfg_.steeringOverrideThreshold ? steerFrames_ + 1 : 0;
+    // Steering held at engagement re-centres on its own; follow it down so that
+    // only a fresh move by the driver counts.
+    steerBaseline_ = std::min(steerBaseline_, std::abs(driverSteer_));
+    const double freshSteer = std::abs(driverSteer_) - steerBaseline_;
+    steerFrames_ = freshSteer > cfg_.steeringOverrideThreshold ? steerFrames_ + 1 : 0;
     if (steerFrames_ >= 3) return OverrideKind::Steering;
 
     throttleFrames_ = driverThrottle > cfg_.throttleOverrideThreshold ? throttleFrames_ + 1 : 0;

@@ -116,10 +116,14 @@ std::optional<std::string> Autopilot::checkAvailability(const VehicleState& s, c
 
 void Autopilot::engage(const VehicleState& s) {
     mode_ = PilotMode::Autopilot;
-    shaper_.reset(clamp(s.effectiveSteering, -1.0, 1.0));
+    // ATSPilot's input is added to the driver's, and the game keeps the driver's
+    // steering where it was. Starting from the current wheel angle would double it,
+    // so ATSPilot's share starts at zero. While off, it outputs nothing, so the
+    // reported input is entirely the driver's.
+    shaper_.reset(0.0);
     longitudinal_.reset(0.0, 0.0);
     cruise_ = GameCruiseManager(eff_.ingame.cruise);
-    override_.reset();
+    override_.reset(clamp(s.inputSteering, -1.0, 1.0));
     invertedSteeringFrames_ = 0;
     hintPath_.reset();
     waitingStop_.reset();
@@ -296,6 +300,13 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
     // While waiting at a stop line a short throttle tap means "go" (handled below).
     if (waitingStop_ && ov == OverrideKind::Throttle) ov = OverrideKind::None;
     if (ov != OverrideKind::None) {
+        if (log_) {
+            log_->info("Override input: steering {:.3f} (ours {:.3f}, driver {:.3f}, held at engage {:.3f}, "
+                       "mixing {}), throttle {:.2f}, brake {:.2f} (ours {:.2f}), effective steering {:.3f}",
+                       s.inputSteering, last_.steering, override_.driverSteering(), override_.steeringBaseline(),
+                       static_cast<int>(override_.steeringMixing()), s.inputThrottle, s.inputBrake, last_.brake,
+                       s.effectiveSteering);
+        }
         disengage(std::string("Driver Override (") + toString(ov) + ")", PilotEvent::DriverOverride);
         return last_;
     }
