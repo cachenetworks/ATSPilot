@@ -9,10 +9,11 @@ namespace atspilot {
 struct SpeedPlannerParams {
     double maxLateralAccel = 1.6;      // m/s^2 for a bobtail on dry road; deliberately conservative
     double comfortDecel = 1.2;         // m/s^2 used to slow ahead of curves
+    double limitDecel = 0.7;           // m/s^2 when the speed limit or maximum drops
     double minCurveSpeed = 4.0;        // m/s floor so very tight geometry still makes progress
     double horizon = 400.0;            // m of path examined
     double sampleSpacing = 5.0;        // m
-    double curvatureSpan = 12.0;       // m; smooths curvature noise from polyline vertices
+    double curvatureSpan = 18.0;       // m; smooths curvature noise from polyline vertices and lane joins
     bool stopAtPathEnd = true;
 };
 

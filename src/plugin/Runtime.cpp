@@ -387,6 +387,7 @@ OutputValues Runtime::currentOutput() {
     if (command_.steerActive && !pilot_->directSteering()) {
         out.steering = static_cast<float>(clamp(command_.steering * config_.steering.outputSign, -1.0, 1.0));
     }
+    out.indicator = command_.indicator;
     if (command_.pedalsActive) {
         out.throttle = static_cast<float>(clamp(command_.throttle, 0.0, 1.0));
         out.brake = static_cast<float>(clamp(command_.brake, 0.0, 1.0));

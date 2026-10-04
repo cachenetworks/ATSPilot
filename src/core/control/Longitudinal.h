@@ -18,6 +18,7 @@ struct LongitudinalParams {
     double throttleRate = 1.2;  // pedal units per second
     double brakeRate = 0.8;
     double maxNormalBrake = 0.45;
+    double routineBrake = 0.25;   // cap for planned slowing (curves, limits); traffic and stops may use more
     double maxStrongBrake = 0.75;
     double emergencyBrake = 0.85;
     double emergencyBrakeRate = 0.6;

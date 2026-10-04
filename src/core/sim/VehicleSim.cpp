@@ -35,6 +35,7 @@ void VehicleSim::step(const ControlCommand& cmd, double dt) {
     if (b.leftBlinker) blinkerLeft_ = !blinkerLeft_, blinkerRight_ = false;
     if (b.rightBlinker) blinkerRight_ = !blinkerRight_, blinkerLeft_ = false;
     if (b.quickPark) ++quickParks_;
+    indicatorHeld_ = cmd.active ? cmd.indicator : 0;
     if (brake > 0.05) cruiseSet_ = 0.0;
     if (cruiseSet_ > 0.0) {
         const double err = std::min(cruiseSet_, cruiseCap_) - v_;
@@ -79,8 +80,8 @@ VehicleState VehicleSim::state() const {
     s.effectiveBrake = s.inputBrake;
     s.steerableWheelAngle = wheel_;
     s.cruiseControlSpeed = cruiseSet_;
-    s.blinkerLeft = blinkerLeft_;
-    s.blinkerRight = blinkerRight_;
+    s.blinkerLeft = blinkerLeft_ || indicatorHeld_ > 0;
+    s.blinkerRight = blinkerRight_ || indicatorHeld_ < 0;
     s.gear = v_ > 0.1 ? 6 : 1;
     s.displayedGear = s.gear;
     s.engineEnabled = true;

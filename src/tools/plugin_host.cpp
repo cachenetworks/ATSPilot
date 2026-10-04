@@ -213,13 +213,18 @@ void sendJobConfig(const std::string& cityId, const std::string& companyId) {
 
 // Applies one input event from the plugin's device to the analogue values and
 // this frame's button presses (indices follow the device's input list).
+bool g_holdLeft = false, g_holdRight = false;  // hold-type turn signal inputs
+
 void applyInputEvent(const scs_input_event_t& ev, float* analog, GameButtons& buttons) {
     if (ev.input_index < 3) {
         analog[ev.input_index] = ev.value_float.value;
         return;
     }
-    if (!ev.value_bool.value || ev.input_index >= g_inputNames.size()) return;
+    if (ev.input_index >= g_inputNames.size()) return;
     const std::string& n = g_inputNames[ev.input_index];
+    if (n == "lblinkerh") g_holdLeft = ev.value_bool.value != 0;
+    if (n == "rblinkerh") g_holdRight = ev.value_bool.value != 0;
+    if (!ev.value_bool.value) return;
     if (n == "cruiectrl") buttons.cruiseToggle = true;
     else if (n == "cruiectrlinc") buttons.cruiseInc = true;
     else if (n == "cruiectrldec") buttons.cruiseDec = true;
@@ -455,6 +460,7 @@ int main(int argc, char** argv) {
             cmd.throttle = semValues[1];
             cmd.brake = semValues[2];
             cmd.buttons = frameButtons;
+            cmd.indicator = g_holdLeft ? 1 : g_holdRight ? -1 : 0;
             truck.step(cmd, dt);
 
             if (!engaged && t > 1.0) {
@@ -586,6 +592,7 @@ int main(int argc, char** argv) {
                 cmd.throttle = navSem[1];
                 cmd.brake = navSem[2];
                 cmd.buttons = frameButtons;
+                cmd.indicator = g_holdLeft ? 1 : g_holdRight ? -1 : 0;
                 truck.step(cmd, dt);
                 driven += atspilot::distance(last, truck.rearAxle());
                 cruiseOnFrames += truck.cruiseSet() > 0.0 ? 1 : 0;

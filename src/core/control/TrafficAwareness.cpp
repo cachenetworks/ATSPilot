@@ -94,7 +94,9 @@ TrafficPicture assessTraffic(const Path& path, double frontS, double speed, cons
 
         // On the path now.
         const Occupancy now = occupancy(path, footprint(v.position, v.yaw, v.length, v.width), centre->index, halfWidth);
-        if (now.inCorridor && now.sMax > frontS && now.sMin < sEnd) {
+        // Ahead of the truck's front; a vehicle beside it (overlapping its length)
+        // cannot be braked for and is left to the lateral clearance of the lane.
+        if (now.inCorridor && now.sMin > frontS - 0.5 && now.sMin < sEnd) {
             PathObstacle ob;
             ob.id = v.id;
             ob.s = std::max(now.sMin, frontS);

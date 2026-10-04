@@ -138,6 +138,7 @@ void Autopilot::engage(const VehicleState& s) {
     // wheel is; through the input mix it is added to the driver's and starts at zero.
     shaper_.reset(directSteering_ ? clamp(s.effectiveSteering, -1.0, 1.0) : 0.0);
     stopAndGoSince_ = -1.0;
+    baseTarget_ = -1.0;
     joinAllowance_ = 0.0;
     joinSide_ = 0;
     longitudinal_.reset(0.0, 0.0);
@@ -310,6 +311,29 @@ GameButtons Autopilot::blinkers(const VehicleState& s, const PathSnapshotPtr& pa
         wantLeft = joinSide_ > 0;
         wantRight = joinSide_ < 0;
     }
+
+    // Preferred: the game's hold controls (lblinkerh/rblinkerh, as ETS2LA's
+    // controller uses). The signal is on exactly while held, so it can never be
+    // left on. If the game does not show the signal while held, fall back to
+    // toggling the ordinary blinker switch.
+    indicatorHold_ = 0;
+    if (holdIndicators_) {
+        const int want = wantLeft ? 1 : wantRight ? -1 : 0;
+        indicatorHold_ = want;
+        const bool shown = (want > 0 && s.blinkerLeft) || (want < 0 && s.blinkerRight);
+        if (want == 0 || shown) {
+            holdSince_ = -1.0;
+            if (shown) holdConfirmed_ = true;
+        } else if (holdSince_ < 0.0) {
+            holdSince_ = time;
+        } else if (!holdConfirmed_ && time - holdSince_ > 1.5) {
+            holdIndicators_ = false;
+            indicatorHold_ = 0;
+            if (log_) log_->info("Hold-type turn signal controls have no effect; using the blinker switch");
+        }
+        if (holdIndicators_) return b;
+    }
+
     if (time - lastBlinkerPress_ < 0.6) return b;
     // The game's indicator switch toggles; telemetry reports its position.
     if (wantLeft && !s.blinkerLeft) {
@@ -518,7 +542,14 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
             return cmd;
         }
     } else {
-        double target = cruiseTarget(s);
+        // A lower speed limit is approached gently rather than braked for at once
+        // (the sign is only reported once passed); the player's maximum applies as set.
+        {
+            const double limit = cruiseTarget(s);
+            if (baseTarget_ < 0.0 || limit >= baseTarget_) baseTarget_ = limit;
+            else baseTarget_ = std::max(limit, baseTarget_ - eff_.planner.limitDecel * dt);
+        }
+        double target = std::min(setSpeed_, baseTarget_);
         std::vector<SpeedConstraint> constraints;
         std::optional<PathStop> nextStop;  // the next stop that needs the driver's throttle tap
         double nextStopRearS = 0.0;
@@ -718,6 +749,12 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
                 pedals.throttle = 0.0;
                 pedals.brake = std::max(pedals.brake, 0.35);
             }
+            // Routine slowing (curves ahead, a lower limit) is planned with comfortable
+            // deceleration, so it never needs more than light braking; the speed
+            // error alone would otherwise ask for strong braking.
+            if (strongBrake <= 0.0 && !waitingStop_ && target > 2.0) {
+                pedals.brake = std::min(pedals.brake, eff_.cruise.routineBrake);
+            }
             if (strongBrake > 0.0 && s.speed > 0.3) {
                 pedals.throttle = 0.0;
                 pedals.brake = std::max(pedals.brake, strongBrake);
@@ -739,6 +776,7 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
     debug_.brakeLevel = pedals.level;
 
     cmd.buttons.merge(blinkers(s, path, s.time));
+    cmd.indicator = indicatorHold_;
 
     status_.mode = mode_;
     last_ = cmd;

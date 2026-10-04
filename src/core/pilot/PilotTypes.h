@@ -36,6 +36,7 @@ struct ControlCommand {
     double throttle = 0.0;
     double brake = 0.0;
     GameButtons buttons;    // one-frame presses of the game's own controls
+    int indicator = 0;      // turn signal held through the game's hold controls: +1 left, -1 right
     double time = 0.0;      // simulation time the command was computed for
 };
 

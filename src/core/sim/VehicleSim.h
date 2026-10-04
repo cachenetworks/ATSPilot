@@ -52,8 +52,8 @@ public:
     // Simulates the game cancelling its cruise control on its own.
     void cancelCruise() { cruiseSet_ = 0.0; }
     // Blinker switch state, toggled by button presses.
-    bool blinkerLeft() const { return blinkerLeft_; }
-    bool blinkerRight() const { return blinkerRight_; }
+    bool blinkerLeft() const { return blinkerLeft_ || indicatorHeld_ > 0; }
+    bool blinkerRight() const { return blinkerRight_ || indicatorHeld_ < 0; }
     int quickParkPresses() const { return quickParks_; }
 
 private:
@@ -69,6 +69,7 @@ private:
     double cruiseIntegral_ = 0.0;
     bool blinkerLeft_ = false;
     bool blinkerRight_ = false;
+    int indicatorHeld_ = 0;  // the game's hold-type signal controls
     int quickParks_ = 0;
 };
 

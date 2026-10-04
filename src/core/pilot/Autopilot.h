@@ -120,6 +120,7 @@ private:
     double lastGreenTime_ = -1e9;
     int lightFacingVotes_ = 0;
     double joinAllowance_ = 0.0;  // > 0 while pulling into the lane
+    double baseTarget_ = -1.0;    // set speed / limit, with decreases rate-limited
     int joinSide_ = 0;            // +1 the lane is to the left, -1 to the right
     std::unordered_map<std::uint32_t, LightState> loggedSignals_;
 
@@ -131,6 +132,10 @@ private:
     bool ourLeftBlinker_ = false;
     bool ourRightBlinker_ = false;
     double lastBlinkerPress_ = -100.0;
+    bool holdIndicators_ = true;   // use the game's hold controls until shown not to work
+    bool holdConfirmed_ = false;
+    double holdSince_ = -1.0;
+    int indicatorHold_ = 0;
     double frontS_ = 0.0;              // rear axle to front bumper, m
     double activeIndication_ = -1e9;
 

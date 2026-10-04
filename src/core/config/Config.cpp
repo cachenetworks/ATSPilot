@@ -119,10 +119,12 @@ ConfigLoadResult loadConfig(const std::string& text) {
         {"cruise", "brake_enter", &c.cruise.brakeEnter, 0.0, 0.5},
         {"cruise", "brake_exit", &c.cruise.brakeExit, 0.0, 0.5},
         {"cruise", "max_normal_brake", &c.cruise.maxNormalBrake, 0.05, 1.0},
+        {"cruise", "routine_brake", &c.cruise.routineBrake, 0.05, 1.0},
         {"cruise", "max_strong_brake", &c.cruise.maxStrongBrake, 0.05, 1.0},
         {"cruise", "emergency_brake", &c.cruise.emergencyBrake, 0.1, 1.0},
         {"planner", "max_lateral_accel", &c.planner.maxLateralAccel, 0.3, 4.0},
         {"planner", "comfort_decel", &c.planner.comfortDecel, 0.3, 4.0},
+        {"planner", "limit_decel", &c.planner.limitDecel, 0.2, 3.0},
         {"planner", "min_curve_speed_mps", &c.planner.minCurveSpeed, 1.0, 20.0},
         {"planner", "horizon_m", &c.planner.horizon, 50.0, 2000.0},
         {"planner", "aggressiveness", &c.aggressiveness, 0.5, 1.5},
@@ -347,12 +349,14 @@ kd = 0.08
 brake_enter = 0.10
 brake_exit = 0.03
 max_normal_brake = 0.45
+routine_brake = 0.25        # most ATSPilot brakes for curves and speed limits
 max_strong_brake = 0.75
 emergency_brake = 0.85
 
 [planner]
 max_lateral_accel = 1.6     # m/s^2 in curves for a bobtail on a dry road
 comfort_decel = 1.2         # m/s^2 used to slow down before curves and stops
+limit_decel = 0.7           # m/s^2 when the speed limit or your maximum drops
 min_curve_speed_mps = 4.0
 horizon_m = 400
 aggressiveness = 1.0        # 0.5 (gentle) .. 1.5 (assertive)

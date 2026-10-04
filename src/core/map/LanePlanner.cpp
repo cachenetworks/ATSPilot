@@ -149,6 +149,42 @@ Vec2 pointAhead(const RoadNetwork& net, std::uint32_t first, double along) {
     return net.segment(cur).points.back().plan();
 }
 
+// Lane joins that do not quite line up leave sideways jogs of a metre or two on
+// otherwise straight road. Followed literally they jerk the steering, and the
+// speed planner reads them as tight curves and brakes hard. Where the heading
+// changes by less than 25 degrees across +-24 m, points are averaged over +-20 m;
+// real bends (tighter than about R 100 m) are left as they are.
+Path smoothJogs(const Path& path) {
+    const auto& pts = path.points();
+    const std::size_t n = pts.size();
+    if (n < 40) return path;
+    std::vector<Vec2> pos(n);
+    for (std::size_t i = 0; i < n; ++i) pos[i] = pts[i].pos;
+    auto yawOf = [](const Vec2& a, const Vec2& b) { return std::atan2(b.y - a.y, b.x - a.x); };
+    const double maxTurn = degToRad(25.0);
+    for (int pass = 0; pass < 2; ++pass) {
+        std::vector<Vec2> next = pos;
+        for (std::size_t i = 13; i + 13 < n; ++i) {
+            const double turn =
+                std::abs(headingDifference(yawOf(pos[i - 13], pos[i - 11]), yawOf(pos[i + 11], pos[i + 13])));
+            const double w = clamp(1.0 - turn / maxTurn, 0.0, 1.0);
+            if (w <= 0.0) continue;
+            Vec2 sum;
+            double weights = 0.0;
+            for (int j = -10; j <= 10; ++j) {
+                const double wt = 11.0 - std::abs(j);
+                sum += pos[static_cast<std::size_t>(static_cast<int>(i) + j)] * wt;
+                weights += wt;
+            }
+            next[i] = lerp(pos[i], sum / weights, w);
+        }
+        pos = std::move(next);
+    }
+    Path out;
+    for (std::size_t i = 0; i < n; ++i) out.append(pos[i], pts[i].speedLimit, pts[i].segmentId);
+    return out;
+}
+
 double smoothstep(double x) {
     x = clamp(x, 0.0, 1.0);
     return x * x * (3.0 - 2.0 * x);
@@ -449,7 +485,7 @@ PlannedPath buildPlannedPath(const RoadNetwork& net, const LaneMatch& start, con
     // Keep only `behind` metres before the truck so the truck sits near the start of
     // the path, where the controller's windowed projection begins searching.
     const double from = std::max(0.0, truckS - params.behind);
-    out.path = raw.trimmed(from, raw.length()).resampled(params.spacing);
+    out.path = smoothJogs(raw.trimmed(from, raw.length()).resampled(params.spacing));
     out.truckS = truckS - from;
     std::vector<PathStop> stopsAhead;
     for (auto stop : out.stops) {

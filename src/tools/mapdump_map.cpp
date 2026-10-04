@@ -10,6 +10,7 @@
 #include <string>
 #include <unordered_map>
 
+#include "control/SpeedPlanner.h"
 #include "map/HashFs.h"
 #include "map/LanePlanner.h"
 #include "map/MapBuilder.h"
@@ -225,6 +226,37 @@ int route(int argc, char** argv) {
                             p.path.positionAt(at0).x, -p.path.positionAt(at0).y);
                 std::printf("  %7.0f m  %-5s %-11s for %.0f m\n", absStart, ind.side > 0 ? "left" : "right",
                             toString(ind.kind), ind.sEnd - ind.sStart);
+            }
+            if (const char* at = std::getenv("ATSPILOT_DUMP_AT")) {
+                // Path points within 30 m of a route distance, with lateral offset from
+                // the chord, to see what a kink is made of.
+                const double target = std::atof(at) - offset + p.truckS;
+                if (target > p.truckS && target < p.truckS + 400.0) {
+                    const Vec2 a = p.path.positionAt(target - 30.0), b = p.path.positionAt(target + 30.0);
+                    const Vec2 d = (b - a).normalized();
+                    for (std::size_t i = 0; i < p.path.size(); ++i) {
+                        const auto& pt = p.path[i];
+                        if (std::abs(pt.s - target) > 30.0) continue;
+                        std::printf("    pt s %7.1f seg %8llu lateral %+6.2f\n", offset + pt.s - p.truckS,
+                                    static_cast<unsigned long long>(pt.segmentId), cross(d, pt.pos - a));
+                    }
+                }
+            }
+            if (std::getenv("ATSPILOT_DUMP_CURVES")) {
+                // Curve speed (1.6 m/s^2) where it is low, and the real heading change
+                // around that point: a tight radius with little heading change is a kink.
+                const double end = std::min(p.path.length() - 20.0, p.truckS + 400.0);
+                for (double s = p.truckS; s < end; s += 5.0) {
+                    const double k = p.path.curvatureAt(s, 12.0);
+                    const double v = curveSpeed(k, 1.6, 4.0);
+                    if (v > 20.0) continue;
+                    const double turn = radToDeg(headingDifference(p.path.yawAt(std::max(0.0, s - 40.0)),
+                                                                   p.path.yawAt(std::min(p.path.length(), s + 40.0))));
+                    const double impliedTurn = radToDeg(80.0 * std::abs(k));
+                    std::printf("    curve at %7.0f m: R %5.0f m -> %4.1f m/s; heading change over 80 m %+5.0f deg (R implies %3.0f)%s\n",
+                                offset + s - p.truckS, 1.0 / std::max(1e-6, std::abs(k)), v, turn, impliedTurn,
+                                std::abs(turn) < 0.4 * impliedTurn ? "  <-- KINK" : "");
+                }
             }
             const double step = std::min(400.0, p.path.length() - p.truckS - 50.0);
             if (step < 20.0) break;
