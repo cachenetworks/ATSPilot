@@ -134,6 +134,7 @@ ConfigLoadResult loadConfig(const std::string& text) {
         {"safety", "command_timeout_s", &c.safety.commandTimeout, 0.05, 2.0},
         {"safety", "warn_cross_track_m", &c.safety.warnCrossTrack, 0.1, 10.0},
         {"safety", "max_cross_track_m", &c.safety.maxCrossTrack, 0.5, 15.0},
+        {"safety", "max_join_offset_m", &c.safety.maxJoinOffset, 0.5, 12.0},
         {"safety", "max_heading_error_deg", &c.safety.maxHeadingErrorDeg, 5.0, 90.0},
         {"map", "lane_width_m", &c.map.laneWidth, 2.5, 6.0},
         {"map", "path_ahead_m", &c.map.pathAhead, 100.0, 3000.0},
@@ -366,6 +367,7 @@ path_timeout_s = 1.5
 command_timeout_s = 0.25
 warn_cross_track_m = 1.2
 max_cross_track_m = 3.0
+max_join_offset_m = 8.0     # engage from the shoulder or a car park up to this far from the lane and pull in
 max_heading_error_deg = 35
 
 [map]

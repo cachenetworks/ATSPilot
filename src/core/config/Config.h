@@ -41,6 +41,7 @@ struct SafetyConfig {
     double commandTimeout = 0.25;    // s
     double warnCrossTrack = 1.2;     // m
     double maxCrossTrack = 3.0;      // m; beyond this the path is considered lost
+    double maxJoinOffset = 8.0;      // m from the lane at which ATSPilot still engages and pulls into it
     double maxHeadingErrorDeg = 35.0;
 };
 

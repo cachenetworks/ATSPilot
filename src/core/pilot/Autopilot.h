@@ -82,6 +82,9 @@ private:
     void logSignal(const PathStop& stop, LightState state, SignalDecision decision, bool byId);
     void clearStop(std::uint32_t segment);
     int lightFacing() const;
+    bool laneTrafficBehind(const Path& path, double s, const std::vector<WorldVehicle>& vehicles) const;
+    // Pulling into the lane from beside it: the larger deviation allowed meanwhile.
+    double crossTrackLimit() const { return std::max(eff_.safety.maxCrossTrack, joinAllowance_); }
     void learnLightFacing(const WorldLight& light, double travelYaw);
 
     Config cfg_;   // as configured
@@ -116,6 +119,8 @@ private:
     Vec2 lastGreenLine_;
     double lastGreenTime_ = -1e9;
     int lightFacingVotes_ = 0;
+    double joinAllowance_ = 0.0;  // > 0 while pulling into the lane
+    int joinSide_ = 0;            // +1 the lane is to the left, -1 to the right
     std::unordered_map<std::uint32_t, LightState> loggedSignals_;
 
     WorldSnapshotPtr world_;

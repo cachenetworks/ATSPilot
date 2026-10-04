@@ -241,3 +241,41 @@ TEST_CASE("a stop sign is left once crossing traffic has passed") {
     CHECK(stoppedAt > 0.0);
     CHECK(rig.frontX() > 160.0);  // through the junction after the traffic left
 }
+
+TEST_CASE("from the shoulder the autopilot pulls into the lane, signalling, after traffic behind has passed") {
+    Config cfg;
+    sim::VehicleSim vehicle;
+    vehicle.reset({0.0, -5.0}, 0.0, 0.0);  // stopped on the shoulder, 5 m right of the lane
+    auto snap = std::make_shared<PathSnapshot>();
+    snap->path = sim::makeStraight(3000.0);
+    auto world = std::make_shared<WorldSnapshot>();
+    world->valid = true;
+    // A car coming up the lane from behind.
+    world->vehicles = {car(-90.0, 0.0, 0.0, 20.0, 3)};
+    Autopilot pilot(cfg);
+    pilot.setWorld(world);
+    double t = 0.0;
+    pilot.request(PilotRequest::Toggle, vehicle.state(), vehicle.config(), snap, t, t);
+    REQUIRE((pilot.mode() == PilotMode::Autopilot));
+
+    bool leftBlinker = false;
+    double movedBeforeCarPassed = 0.0;
+    for (int k = 0; k < 60 * 40; ++k) {
+        t += 1.0 / 60.0;
+        if (!world->vehicles.empty()) {
+            world->vehicles[0].position.x += 20.0 / 60.0;
+            if (world->vehicles[0].position.x < vehicle.state().worldPosition.x) {
+                movedBeforeCarPassed = std::max(movedBeforeCarPassed, std::abs(vehicle.state().worldPosition.z - 5.0));
+            }
+            if (world->vehicles[0].position.x > 400.0) world->vehicles.clear();
+        }
+        const ControlCommand c = pilot.update(vehicle.state(), vehicle.config(), snap, t, t, t);
+        vehicle.step(c, 1.0 / 60.0);
+        leftBlinker = leftBlinker || vehicle.blinkerLeft();
+    }
+    CHECK((pilot.mode() == PilotMode::Autopilot));
+    CHECK(leftBlinker);
+    CHECK(movedBeforeCarPassed < 0.5);                            // waited for the car
+    CHECK(std::abs(vehicle.state().worldPosition.z) < 0.6);       // in the lane (plan y = -world z)
+    CHECK(vehicle.speed() > 5.0);
+}

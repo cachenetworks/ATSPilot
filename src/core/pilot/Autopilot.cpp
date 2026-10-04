@@ -119,7 +119,10 @@ std::optional<std::string> Autopilot::checkAvailability(const VehicleState& s, c
     const double yaw = coords::sdkHeadingToYaw(s.headingUnit);
     const auto proj = path->path.project(coords::worldToPlan(s.worldPosition));
     if (!proj) return "No valid road path";
-    if (std::abs(proj->crossTrackError) > eff_.safety.maxCrossTrack) return "Truck not on the planned lane";
+    // Off the lane (on the shoulder, pulling out of a lay-by) ATSPilot still engages
+    // and pulls into it, up to max_join_offset_m.
+    if (std::abs(proj->crossTrackError) > std::max(eff_.safety.maxCrossTrack, eff_.safety.maxJoinOffset))
+        return "Truck not on the planned lane";
     if (std::abs(headingDifference(yaw, proj->yaw)) > degToRad(eff_.safety.maxHeadingErrorDeg))
         return "Truck not aligned with the road";
     return std::nullopt;
@@ -135,6 +138,8 @@ void Autopilot::engage(const VehicleState& s) {
     // wheel is; through the input mix it is added to the driver's and starts at zero.
     shaper_.reset(directSteering_ ? clamp(s.effectiveSteering, -1.0, 1.0) : 0.0);
     stopAndGoSince_ = -1.0;
+    joinAllowance_ = 0.0;
+    joinSide_ = 0;
     longitudinal_.reset(0.0, 0.0);
     cruise_ = GameCruiseManager(eff_.ingame.cruise);
     override_.reset(clamp(s.inputSteering, -1.0, 1.0));
@@ -190,6 +195,16 @@ void Autopilot::request(PilotRequest r, const VehicleState& s, const VehicleConf
                 return;
             }
             engage(s);
+            {
+                const auto proj = path->path.project(coords::worldToPlan(s.worldPosition));
+                if (proj && std::abs(proj->crossTrackError) > eff_.safety.warnCrossTrack) {
+                    joinAllowance_ = std::abs(proj->crossTrackError) + 1.0;
+                    joinSide_ = proj->crossTrackError > 0.0 ? -1 : 1;  // lane is to the right when we are left of it
+                    if (log_) log_->info("Pulling into the lane from {:.1f} m to its {}", std::abs(proj->crossTrackError),
+                                         proj->crossTrackError > 0.0 ? "left" : "right");
+                    setMessage("Pulling into the lane");
+                }
+            }
             break;
         case PilotRequest::Cancel:
             disengage("ATSPilot Off");
@@ -236,6 +251,24 @@ void Autopilot::clearStop(std::uint32_t segment) {
     if (clearedStops_.size() > 8) clearedStops_.pop_front();
 }
 
+bool Autopilot::laneTrafficBehind(const Path& path, double s, const std::vector<WorldVehicle>& vehicles) const {
+    // The lane's frame where the truck is; vehicles behind in it that would arrive
+    // within 8 s are traffic to let pass before pulling in.
+    const Vec2 p0 = path.positionAt(s);
+    const double yaw = path.yawAt(s);
+    const Vec2 dir{std::cos(yaw), std::sin(yaw)};
+    const Vec2 left{-dir.y, dir.x};
+    for (const auto& v : vehicles) {
+        const Vec2 rel = v.position - p0;
+        const double along = dot(rel, dir);
+        const double lateral = dot(rel, left);
+        if (along > 15.0 || along < -200.0 || std::abs(lateral) > 2.5) continue;
+        if (std::cos(v.yaw - yaw) < 0.7 || v.speed < 2.0) continue;
+        if (along > 0.0 || -along / v.speed < 8.0) return true;
+    }
+    return false;
+}
+
 int Autopilot::lightFacing() const {
     if (lightFacingVotes_ >= 3) return 1;
     if (lightFacingVotes_ <= -3) return -1;
@@ -272,6 +305,10 @@ GameButtons Autopilot::blinkers(const VehicleState& s, const PathSnapshotPtr& pa
                 break;
             }
         }
+    }
+    if (joinAllowance_ > 0.0 && joinSide_ != 0) {
+        wantLeft = joinSide_ > 0;
+        wantRight = joinSide_ < 0;
     }
     if (time - lastBlinkerPress_ < 0.6) return b;
     // The game's indicator switch toggles; telemetry reports its position.
@@ -396,7 +433,7 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
         std::optional<std::size_t> hint =
             hintPath_ == path ? hintIndex_ : path->path.segmentIndexAt(path->truckS);
         LateralOutput out = computeLateral(eff_.steering.lateral, path->path, in, hint);
-        if (out.valid && std::abs(out.crossTrackError) > eff_.safety.maxCrossTrack && hint) {
+        if (out.valid && std::abs(out.crossTrackError) > crossTrackLimit() && hint) {
             // The windowed search may have locked onto the wrong stretch; retry globally.
             out = computeLateral(eff_.steering.lateral, path->path, in, std::nullopt);
         }
@@ -410,18 +447,29 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
     if (mode_ == PilotMode::Autopilot) {
         if (!lat) {
             enterEmergency("Path Lost");
-        } else if (std::abs(lat->crossTrackError) > eff_.safety.maxCrossTrack) {
+        } else if (std::abs(lat->crossTrackError) > crossTrackLimit()) {
             enterEmergency("Dangerous path deviation");
         } else if (std::abs(lat->headingError) > degToRad(eff_.safety.maxHeadingErrorDeg)) {
             enterEmergency("Heading deviates from path");
-        } else if (std::abs(lat->crossTrackError) > eff_.safety.warnCrossTrack && s.time - lastCrossTrackWarn_ > 5.0) {
+        } else if (joinAllowance_ <= 0.0 && std::abs(lat->crossTrackError) > eff_.safety.warnCrossTrack &&
+                   s.time - lastCrossTrackWarn_ > 5.0) {
             lastCrossTrackWarn_ = s.time;
             if (log_) log_->warn("Cross-track error {:.2f} m", lat->crossTrackError);
         }
     }
 
     double desiredWheel = 0.0;
-    if (lat && (mode_ != PilotMode::EmergencyStop || std::abs(lat->crossTrackError) <= eff_.safety.maxCrossTrack)) {
+    // Pulling into the lane: the allowed deviation shrinks as the truck closes in.
+    if (lat && joinAllowance_ > 0.0) {
+        joinAllowance_ = std::min(joinAllowance_, std::abs(lat->crossTrackError) + 1.0);
+        if (std::abs(lat->crossTrackError) < eff_.safety.warnCrossTrack) {
+            joinAllowance_ = 0.0;
+            joinSide_ = 0;
+            if (log_) log_->info("In the lane");
+            setMessage("Autopilot Engaged");
+        }
+    }
+    if (lat && (mode_ != PilotMode::EmergencyStop || std::abs(lat->crossTrackError) <= crossTrackLimit())) {
         // Normal driving, or an emergency stop with geometry still trusted: track the lane.
         desiredWheel = lat->wheelAngle;
     } else {
@@ -501,6 +549,15 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
                 if (traffic.requiredDecel > 2.5) strongBrake = clamp(traffic.requiredDecel / 7.0, 0.35, 0.9);
             }
             const bool junctionBusy = traffic.nearest && traffic.nearest->s - frontS < 40.0;
+
+            // Pulling into the lane: slowly, and only when nothing is coming up behind in it.
+            if (joinAllowance_ > 0.0) {
+                target = std::min(target, 8.0);
+                if (aware && laneTrafficBehind(path->path, lat->pathS, world_->vehicles)) {
+                    target = 0.0;
+                    setMessage("Waiting for traffic to pass");
+                }
+            }
 
             for (const auto& stop : path->stops) {
                 if (stop.s < frontS - 1.0) continue;  // already at or past it
