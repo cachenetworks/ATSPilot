@@ -348,6 +348,7 @@ void Runtime::onFrameEnd() {
 
         if (map_) map_->submitVehicle(current_, vehicleConfig_, now);
         updateFromGameMemory();
+        pilot_->setInputReady(inputActive_);
         pollHotkeys();
 
         double pathWall = -1e9;

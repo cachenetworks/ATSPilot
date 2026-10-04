@@ -20,6 +20,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <cctype>
 
 #include "map/LanePlanner.h"
 #include "map/RoutePlanner.h"
@@ -74,6 +75,17 @@ SCSAPI_RESULT unregChannel(const scs_string_t name, const scs_u32_t index, const
     return SCS_RESULT_ok;
 }
 SCSAPI_RESULT regDevice(const scs_input_device_t* const d) {
+    // ATS 1.61 rejects the whole device ("invalid display_name of input N") when a
+    // display name holds anything but letters, digits and spaces.
+    for (scs_u32_t i = 0; i < d->input_count; ++i) {
+        for (const char* c = d->inputs[i].display_name; c && *c; ++c) {
+            if (!std::isalnum(static_cast<unsigned char>(*c)) && *c != ' ') {
+                std::fprintf(stderr, "register_device: invalid display_name of input %u ('%s')\n", i,
+                             d->inputs[i].display_name);
+                return SCS_RESULT_invalid_parameter;
+            }
+        }
+    }
     g_device = *d;
     g_deviceInputs.assign(d->inputs, d->inputs + d->input_count);
     for (const auto& i : g_deviceInputs) g_inputNames.push_back(i.name);

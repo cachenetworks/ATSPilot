@@ -42,6 +42,8 @@ enum InputIndex : scs_u32_t {
     kInputCount
 };
 
+// Display names: the game rejects the whole device if any name has characters
+// other than letters, digits and spaces (seen: "(" in 1.61).
 const scs_input_device_input_t g_inputs[kInputCount] = {
     {"steering", "ATSPilot Steering", SCS_VALUE_TYPE_float},
     {"aforward", "ATSPilot Throttle", SCS_VALUE_TYPE_float},
@@ -53,8 +55,8 @@ const scs_input_device_input_t g_inputs[kInputCount] = {
     {"lblinker", "ATSPilot Left Blinker", SCS_VALUE_TYPE_bool},
     {"rblinker", "ATSPilot Right Blinker", SCS_VALUE_TYPE_bool},
     {"quickpark", "ATSPilot Quick Park", SCS_VALUE_TYPE_bool},
-    {"lblinkerh", "ATSPilot Left Signal (hold)", SCS_VALUE_TYPE_bool},
-    {"rblinkerh", "ATSPilot Right Signal (hold)", SCS_VALUE_TYPE_bool},
+    {"lblinkerh", "ATSPilot Left Signal Hold", SCS_VALUE_TYPE_bool},
+    {"rblinkerh", "ATSPilot Right Signal Hold", SCS_VALUE_TYPE_bool},
 };
 
 constexpr bool isButton(scs_u32_t i) { return i >= kCruiseToggle; }

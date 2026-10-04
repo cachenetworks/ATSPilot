@@ -55,6 +55,9 @@ public:
     // ATSPilot's steering is written to the truck directly instead of being added
     // to the driver's input through the input mix.
     void setDirectSteering(bool direct) { directSteering_ = direct; }
+    // Whether the game accepted ATSPilot's input device (pedals, cruise control,
+    // signals); without it ATSPilot cannot drive.
+    void setInputReady(bool ready) { inputReady_ = ready; }
     bool directSteering() const { return directSteering_; }
 
     PilotMode mode() const { return mode_; }
@@ -126,6 +129,7 @@ private:
 
     WorldSnapshotPtr world_;
     bool directSteering_ = false;
+    bool inputReady_ = true;
     std::uint32_t unmatchedSignalLogged_ = 0xFFFFFFFFu;
 
     // Turn signals ATSPilot switched on (it never cancels the driver's own).

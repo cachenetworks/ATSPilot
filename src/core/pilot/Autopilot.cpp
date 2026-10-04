@@ -110,6 +110,7 @@ std::optional<std::string> Autopilot::checkAvailability(const VehicleState& s, c
                                                         double wallNow, double pathWall) const {
     if (!eff_.autopilotEnabled) return "ATSPilot disabled in config";
     if (!s.valid) return "Telemetry Unavailable";
+    if (!inputReady_) return "Game input device not available (see game.log.txt)";
     if (s.paused) return "Game paused";
     if (s.speed < -0.5 || s.gear < 0) return "Not available in reverse";
     if (s.parkingBrake) return "Release parking brake";
