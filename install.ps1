@@ -31,7 +31,9 @@ function Find-Ats {
         }
     }
     foreach ($lib in $libraries | Select-Object -Unique) {
-        $candidate = Join-Path $lib 'steamapps\common\American Truck Simulator'
+        # Libraries on drives that no longer exist (unplugged, removed) are skipped.
+        if (-not (Test-Path -LiteralPath $lib)) { continue }
+        $candidate = [System.IO.Path]::Combine($lib, 'steamapps\common\American Truck Simulator')
         if (Test-Path (Join-Path $candidate 'bin\win_x64\amtrucks.exe')) { return $candidate }
     }
     return $null
