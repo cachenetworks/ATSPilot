@@ -12,6 +12,7 @@
 #include <thread>
 #include <vector>
 
+#include "Hud.h"
 #include "config/Config.h"
 #include "map/MapService.h"
 #include "pilot/Autopilot.h"
@@ -67,6 +68,9 @@ public:
     // --- Input side (main thread) ---
     void setInputDeviceActive(bool active);
     OutputValues currentOutput();
+    // Presses of the game's own controls (cruise control, blinkers, quick park) to
+    // send in the next input frame.
+    GameButtons takeButtons();
 
     // Requests from outside the frame loop (development harness); applied on the next frame.
     void queueRequest(PilotRequest r);
@@ -102,6 +106,7 @@ private:
     Logger log_;
     std::unique_ptr<MapService> map_;
     std::unique_ptr<Autopilot> pilot_;
+    std::unique_ptr<Hud> hud_;
     TelemetryRecorder recorder_;
 
     VehicleState pending_;
@@ -118,6 +123,7 @@ private:
 
     ControlCommand command_;
     double commandWall_ = -1e9;
+    GameButtons pendingButtons_;
 
     struct Hotkey {
         KeyBinding binding;

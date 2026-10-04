@@ -72,7 +72,9 @@ PrefabDescription parsePrefabDescription(const char* data, std::size_t size) {
         for (std::uint32_t i = 0; i < countPrev && i < 4; ++i) {
             if (prev[i] >= 0 && static_cast<std::uint32_t>(prev[i]) < curveCount) c.prev.push_back(prev[i]);
         }
-        r.skip(4 + 8 + 4);  // semaphore id, traffic rule, nav node index
+        c.semaphoreId = r.i32();
+        c.trafficRule = r.u64();
+        r.skip(4);  // nav node index
     }
     return d;
 }

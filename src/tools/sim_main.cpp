@@ -64,6 +64,7 @@ int main(int argc, char** argv) {
         {"s_curve", makeSCurve(300.0, 150.0, degToRad(50.0), 400.0), 20.0, {}},
         {"highway_ramp", makeHighwayRamp(), 27.0, {}},
         {"s_curve_loaded_trailer", makeSCurve(300.0, 200.0, degToRad(40.0), 400.0), 22.0, loaded},
+        {"city_turn_r20", makeArc(80.0, 20.0, degToRad(90.0), 150.0, 2.0), 6.0, {}},
     };
 
     int failures = 0;

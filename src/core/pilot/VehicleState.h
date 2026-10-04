@@ -36,6 +36,8 @@ struct VehicleState {
     bool engineEnabled = false;
     bool electricEnabled = false;
     bool wipers = false;
+    bool blinkerLeft = false;      // turn signal switched on (not the flashing light state)
+    bool blinkerRight = false;
 
     double navigationDistance = 0.0;   // m
     double navigationTime = 0.0;       // s

@@ -39,6 +39,45 @@ bool nonEmpty(const std::string& s) { return !s.empty(); }
 
 }  // namespace
 
+const char* toString(DrivingProfile p) {
+    switch (p) {
+        case DrivingProfile::Auto: return "auto";
+        case DrivingProfile::Comfort: return "comfort";
+        case DrivingProfile::Normal: return "normal";
+        case DrivingProfile::Assertive: return "assertive";
+        case DrivingProfile::HeavyHaul: return "heavy_haul";
+    }
+    return "?";
+}
+
+DrivingProfile resolveProfile(DrivingProfile p, double cargoMassKg) {
+    if (p != DrivingProfile::Auto) return p;
+    return cargoMassKg > 25000.0 ? DrivingProfile::HeavyHaul : DrivingProfile::Normal;
+}
+
+Config applyProfile(const Config& base, DrivingProfile resolved) {
+    Config c = base;
+    // Multipliers on the configured tuning: curve lateral acceleration, braking,
+    // steering rate and maximum speed.
+    double lat = 1.0, decel = 1.0, rate = 1.0, speedCap = 1e9;
+    switch (resolved) {
+        case DrivingProfile::Comfort: lat = 0.8; decel = 0.8; rate = 0.8; break;
+        case DrivingProfile::Assertive: lat = 1.2; decel = 1.25; rate = 1.2; break;
+        case DrivingProfile::HeavyHaul:
+            lat = 0.7; decel = 0.7; rate = 0.7;
+            speedCap = speedToMps(55.0, SpeedUnits::Mph);
+            break;
+        case DrivingProfile::Auto:
+        case DrivingProfile::Normal: break;
+    }
+    c.planner.maxLateralAccel *= lat;
+    c.planner.comfortDecel *= decel;
+    c.steering.shaper.maxRate *= rate;
+    c.speed.maxSpeed = std::min(c.speed.maxSpeed, mpsToSpeed(speedCap, c.speed.units));
+    c.profile = resolved;
+    return c;
+}
+
 double speedToMps(double value, SpeedUnits units) { return value * (units == SpeedUnits::Mph ? kMphToMps : kKphToMps); }
 double mpsToSpeed(double mps, SpeedUnits units) { return mps / (units == SpeedUnits::Mph ? kMphToMps : kKphToMps); }
 const char* unitLabel(SpeedUnits units) { return units == SpeedUnits::Mph ? "mph" : "km/h"; }
@@ -55,15 +94,16 @@ ConfigLoadResult loadConfig(const std::string& text) {
     double logFiles = c.debug.logFiles;
     std::string units = "mph";
     std::string controller = "pure_pursuit";
+    std::string profile = "auto";
 
     const NumberBinding numbers[] = {
         {"speed", "max", &c.speed.maxSpeed, 5.0, 130.0},
         {"speed", "limit_offset", &c.speed.limitOffset, -30.0, 30.0},
-        {"speed", "step", &c.speed.step, 0.5, 20.0},
         {"steering", "lookahead_base_m", &c.steering.lateral.lookaheadBase, 2.0, 80.0},
         {"steering", "lookahead_speed_factor", &c.steering.lateral.lookaheadSpeedFactor, 0.0, 3.0},
         {"steering", "lookahead_min_m", &c.steering.lateral.lookaheadMin, 2.0, 80.0},
         {"steering", "lookahead_max_m", &c.steering.lateral.lookaheadMax, 5.0, 200.0},
+        {"steering", "curve_lookahead_factor", &c.steering.lateral.curveLookaheadFactor, 0.0, 2.0},
         {"steering", "stanley_gain", &c.steering.lateral.stanleyGain, 0.05, 10.0},
         {"steering", "stanley_softening", &c.steering.lateral.stanleySoftening, 0.1, 20.0},
         {"steering", "max_steering_rate", &c.steering.shaper.maxRate, 0.05, 10.0},
@@ -100,6 +140,14 @@ ConfigLoadResult loadConfig(const std::string& text) {
         {"map", "max_localization_distance_m", &c.map.maxLocalizationDistance, 2.0, 50.0},
         {"route", "lane_change_cost_m", &c.route.laneChangeCost, 5.0, 1000.0},
         {"route", "recalculate_after_s", &c.route.recalcAfter, 0.2, 10.0},
+        {"route", "gps_tolerance", &c.route.gpsTolerance, 0.005, 0.5},
+        {"ingame", "blinker_distance_m", &c.ingame.blinkerDistance, 20.0, 1000.0},
+        {"ingame", "cruise_min_speed_mps", &c.ingame.cruise.minSpeed, 2.0, 25.0},
+        {"intersections", "yield_speed_mps", &c.intersections.yieldSpeed, 1.0, 15.0},
+        {"intersections", "go_tap_max_s", &c.intersections.goTapMaxSeconds, 0.2, 5.0},
+        {"intersections", "stop_line_margin_m", &c.intersections.stopLineMargin, 0.0, 10.0},
+        {"hud", "scale", &c.hud.scale, 0.5, 3.0},
+        {"hud", "opacity", &c.hud.opacity, 0.2, 1.0},
         {"debug", "log_max_mb", &c.debug.logMaxMb, 0.1, 100.0},
         {"debug", "log_files", &logFiles, 1.0, 20.0},
         {"debug", "record_max_mb", &c.debug.recordMaxMb, 1.0, 2000.0},
@@ -111,6 +159,13 @@ ConfigLoadResult loadConfig(const std::string& text) {
         {"safety", "driver_override", &c.safety.driverOverride},
         {"map", "enabled", &c.map.enabled},
         {"route", "enabled", &c.route.enabled},
+        {"route", "match_game_gps", &c.route.matchGameGps},
+        {"ingame", "use_cruise_control", &c.ingame.useCruiseControl},
+        {"ingame", "use_blinkers", &c.ingame.useBlinkers},
+        {"ingame", "quick_park", &c.ingame.quickPark},
+        {"intersections", "stop_at_signals", &c.intersections.stopAtSignals},
+        {"intersections", "stop_at_stop_signs", &c.intersections.stopAtStopSigns},
+        {"hud", "enabled", &c.hud.enabled},
         {"audio", "enabled", &c.audioEnabled},
         {"debug", "logging", &c.debug.logging},
         {"debug", "record_telemetry", &c.debug.recordTelemetry},
@@ -121,14 +176,15 @@ ConfigLoadResult loadConfig(const std::string& text) {
         {"speed", "units", &units, [](const std::string& s) { return s == "mph" || s == "kph"; }},
         {"steering", "controller", &controller,
          [](const std::string& s) { return s == "pure_pursuit" || s == "stanley"; }},
-        {"controls", "toggle_autopilot", &c.controls.toggleAutopilot, nonEmpty},
-        {"controls", "toggle_lane_assist", &c.controls.toggleLaneAssist, nonEmpty},
-        {"controls", "toggle_cruise", &c.controls.toggleCruise, nonEmpty},
-        {"controls", "speed_up", &c.controls.speedUp, nonEmpty},
-        {"controls", "speed_down", &c.controls.speedDown, nonEmpty},
-        {"controls", "resume", &c.controls.resume, nonEmpty},
-        {"controls", "cancel", &c.controls.cancel, nonEmpty},
-        {"controls", "emergency_disable", &c.controls.emergencyDisable, nonEmpty},
+        {"controls", "toggle", &c.controls.toggle, nonEmpty},
+        {"profile", "name", &profile,
+         [](const std::string& v) {
+             return v == "auto" || v == "comfort" || v == "normal" || v == "assertive" || v == "heavy_haul";
+         }},
+        {"hud", "corner", &c.hud.corner,
+         [](const std::string& v) {
+             return v == "top_left" || v == "top_right" || v == "bottom_left" || v == "bottom_right";
+         }},
         {"map", "game_dir", &c.map.gameDir, [](const std::string&) { return true; }},
         {"debug", "log_level", &c.debug.logLevel, isLogLevel},
     };
@@ -173,6 +229,11 @@ ConfigLoadResult loadConfig(const std::string& text) {
     c.steering.initialMaxWheelAngleDeg = maxWheelAngle;
     c.steering.outputSign = c.steering.outputSign < 0.0 ? -1.0 : 1.0;
     c.debug.logFiles = static_cast<int>(logFiles);
+    c.profile = profile == "comfort"      ? DrivingProfile::Comfort
+                : profile == "normal"     ? DrivingProfile::Normal
+                : profile == "assertive"  ? DrivingProfile::Assertive
+                : profile == "heavy_haul" ? DrivingProfile::HeavyHaul
+                                          : DrivingProfile::Auto;
 
     // Cross-field consistency.
     if (c.steering.lateral.lookaheadMin > c.steering.lateral.lookaheadMax) {
@@ -200,19 +261,44 @@ std::string defaultConfigText() {
 [autopilot]
 enabled = true
 
+[controls]
+# ATSPilot has one key: on/off. Set the speed with the game's own cruise
+# control +/- keys; braking, steering or the throttle take over at any time.
+# Key names: F1-F24, A-Z, 0-9, Insert, Delete, Home, End, PageUp, PageDown,
+# Up, Down, Left, Right, Minus, Equals, Backspace, Pause, Num0-Num9, NumPlus,
+# NumMinus. Modifiers: Shift+, Ctrl+, Alt+. Read only while ATS has focus.
+toggle = "F9"
+
+[profile]
+name = "auto"               # auto (heavy_haul above 25 t), comfort, normal, assertive, heavy_haul
+
 [speed]
 units = "mph"               # "mph" or "kph"
-max = 65                    # highest set speed ATSPilot will use
+max = 65                    # used until you set the game's cruise control speed
 limit_offset = 0            # added to the navigation speed limit
 follow_speed_limit = true   # never exceed the limit reported by the in-game navigation
-step = 5                    # set-speed change per key press
+
+[ingame]
+use_cruise_control = true   # hold speed with the game's cruise control (its adaptive cruise handles traffic)
+cruise_min_speed_mps = 8.5  # starting guess for the lowest speed the game's cruise accepts; learned
+use_blinkers = true         # indicate lane changes, exits and turns
+blinker_distance_m = 150
+quick_park = true           # ask the game to park once the depot entrance is reached
+
+[intersections]
+stop_at_signals = true      # stop at traffic lights and wait for a throttle tap
+stop_at_stop_signs = true   # stop at stop signs and wait for a throttle tap
+yield_speed_mps = 4.0       # through give-way and railway-crossing lanes
+go_tap_max_s = 1.5          # a throttle tap shorter than this while waiting means "go"
+stop_line_margin_m = 1.5
 
 [steering]
 controller = "pure_pursuit" # "pure_pursuit" or "stanley"
 lookahead_base_m = 15.0
 lookahead_speed_factor = 0.5
-lookahead_min_m = 8.0
+lookahead_min_m = 4.0
 lookahead_max_m = 60.0
+curve_lookahead_factor = 0.35 # limits lookahead to this fraction of the tightest radius ahead; 0 = off
 stanley_gain = 1.0
 stanley_softening = 2.0
 max_steering_rate = 1.5     # normalized steering units per second at low speed
@@ -225,6 +311,7 @@ learn_steering_ratio = true
 output_sign = -1            # flip to 1 only if ATSPilot steers the wrong way
 
 [cruise]
+# ATSPilot's own pedal control, used below cruise-control speed and for braking.
 kp = 0.30
 ki = 0.04
 kd = 0.08
@@ -236,7 +323,7 @@ emergency_brake = 0.85
 
 [planner]
 max_lateral_accel = 1.6     # m/s^2 in curves for a bobtail on a dry road
-comfort_decel = 1.2         # m/s^2 used to slow down before curves
+comfort_decel = 1.2         # m/s^2 used to slow down before curves and stops
 min_curve_speed_mps = 4.0
 horizon_m = 400
 aggressiveness = 1.0        # 0.5 (gentle) .. 1.5 (assertive)
@@ -253,19 +340,6 @@ warn_cross_track_m = 1.2
 max_cross_track_m = 3.0
 max_heading_error_deg = 35
 
-[controls]
-# Key names: F1-F24, A-Z, 0-9, Insert, Delete, Home, End, PageUp, PageDown,
-# Up, Down, Left, Right, Minus, Equals, Backspace, Pause, Num0-Num9, NumPlus,
-# NumMinus. Modifiers: Shift+, Ctrl+, Alt+. Keys are only read while ATS has focus.
-toggle_autopilot = "F9"
-toggle_lane_assist = "F8"
-toggle_cruise = "Insert"
-speed_up = "Equals"
-speed_down = "Minus"
-resume = "Shift+F9"
-cancel = "Delete"
-emergency_disable = "Shift+Delete"
-
 [map]
 enabled = true
 game_dir = ""               # empty = detect from the plugin location
@@ -275,8 +349,16 @@ max_localization_distance_m = 12
 
 [route]
 enabled = true              # follow a route to the job destination (otherwise follow the road)
+match_game_gps = true       # keep the route consistent with the in-game GPS distance
+gps_tolerance = 0.04
 lane_change_cost_m = 60     # how strongly routing avoids lane changes
 recalculate_after_s = 1.0   # time off the route before recalculating
+
+[hud]
+enabled = true              # in-game status panel (needs borderless or windowed display mode)
+corner = "top_right"        # top_left, top_right, bottom_left, bottom_right
+scale = 1.0
+opacity = 0.85
 
 [audio]
 enabled = true

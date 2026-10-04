@@ -53,6 +53,7 @@ int build(int argc, char** argv) {
     std::printf("prefab node checks  %zu, misplaced %zu\n", st.prefabNodeChecks, st.prefabNodeMismatches);
     for (const auto& m : st.prefabMismatchSamples) std::printf("  misplaced: %s\n", m.c_str());
     std::printf("merge connections   %zu, gap connections %zu\n", st.mergeConnections, st.gapConnections);
+    std::printf("controlled lanes    %zu (signals, stop signs, give way)\n", st.controlledLanes);
     std::printf("road dead ends      %zu genuine (nothing attached in the map), %zu missed links\n",
                 st.roadDeadEndsInMap, st.roadDeadEndsMissedLink);
     for (const auto& m : st.missedLinkSamples) std::printf("  missed: %s\n", m.c_str());

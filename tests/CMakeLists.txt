@@ -5,6 +5,7 @@ add_executable(atspilot_tests
   test_path.cpp
   test_route.cpp
   test_control.cpp
+  test_cruise.cpp
   test_config.cpp
   test_safety.cpp
   test_autopilot.cpp

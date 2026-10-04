@@ -168,7 +168,7 @@ bool RoadNetwork::save(const std::filesystem::path& file, const std::string& fin
             put(f, s.itemUid);
             put(f, static_cast<std::uint8_t>(s.kind));
             put(f, s.laneIndex);
-            put(f, static_cast<std::uint8_t>(s.leftSide ? 1 : 0));
+            put(f, static_cast<std::uint8_t>((s.leftSide ? 1 : 0) | (s.rules << 1)));
             put(f, static_cast<std::uint32_t>(s.points.size()));
             f.write(reinterpret_cast<const char*>(s.points.data()),
                     static_cast<std::streamsize>(s.points.size() * sizeof(LanePoint)));
@@ -224,7 +224,8 @@ std::optional<RoadNetwork> RoadNetwork::load(const std::filesystem::path& file, 
             return std::nullopt;
         }
         s.kind = static_cast<LaneKind>(kind);
-        s.leftSide = left != 0;
+        s.leftSide = (left & 1) != 0;
+        s.rules = static_cast<std::uint8_t>(left >> 1);
         s.points.resize(pts);
         if (!f.read(reinterpret_cast<char*>(s.points.data()), static_cast<std::streamsize>(pts * sizeof(LanePoint))) ||
             !get(f, nexts) || nexts > 64) {

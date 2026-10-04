@@ -1,4 +1,4 @@
-#include "TestSupport.h"
+﻿#include "TestSupport.h"
 
 #include <cstring>
 #include <filesystem>

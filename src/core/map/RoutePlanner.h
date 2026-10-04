@@ -19,6 +19,7 @@ struct Route {
     double length = 0.0;       // metres along lanes, excluding lane-change penalties
     std::size_t expanded = 0;  // search effort, for diagnostics
     std::string failure;
+    bool gpsMatched = false;   // total length agrees with the in-game navigation distance
 
     // Index of `segment` in steps at or after `from`, or -1.
     int find(std::uint32_t segment, int from = 0) const;
@@ -38,5 +39,13 @@ struct RouteOptions {
 // the graph.
 Route planRoute(const RoadNetwork& net, std::uint32_t startSegment, double startS,
                 const std::vector<std::uint32_t>& goals, const RouteOptions& options = {});
+
+// Like planRoute, but the result should be `targetLength` long: the in-game GPS
+// reports only its remaining distance, so among the shortest route and the
+// routes taking a different branch at one of the next `maxBranches` forks, the
+// one whose length matches that distance is taken to be the GPS route.
+Route planRouteMatching(const RoadNetwork& net, std::uint32_t startSegment, double startS,
+                        const std::vector<std::uint32_t>& goals, double targetLength, double tolerance,
+                        const RouteOptions& options = {}, int maxBranches = 6);
 
 }  // namespace atspilot

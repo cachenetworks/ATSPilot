@@ -31,6 +31,8 @@ disagree, the headers win.
 | `truck.engine.gear`, `truck.brake.parking`, `truck.engine.enabled` | engagement preconditions |
 | `truck.navigation.speed.limit`, `.distance`, `.time` | speed-limit following, status |
 | `truck.wipers` | rain proxy for curve-speed derating |
+| `truck.cruise_control` | the game's cruise-control set speed (0 = off): feedback for ATSPilot's presses |
+| `truck.lblinker`, `truck.rblinker` | blinker switch state, so ATSPilot toggles only when needed |
 | events `frame_start/frame_end/paused/started` | timing, pause handling |
 | `configuration` `truck` | wheel positions, steerable and powered wheels, giving the wheelbase |
 | `configuration` `trailer.N`, `job` | trailer count, cargo mass, `destination.city.id` + `destination.company.id` for routing |
@@ -66,6 +68,20 @@ mix steering  `dsteering - memory(j_steer_c?1, …) - semantical.steering?0`
 mix aforward  `memory(j_throttle_c?1, …) + semantical.aforward?0`
 mix abackward `memory(j_brake_c?1, …) + semantical.abackward?0`
 ```
+
+The same device also drives these button mixes from the 1.61 profile, each
+pressed for exactly one input frame:
+
+```
+mix cruiectrl    `keyboard.c?0 || long_press(joy.b2?0) | semantical.cruiectrl?0`
+mix cruiectrlinc `semantical.cruiectrlinc?0`      (and cruiectrldec, cruiectrlres)
+mix lblinker     `keyboard.lbracket?0 || ... | semantical.lblinker?0`   (and rblinker)
+mix quickpark    `keyboard.q?0 | semantical.quickpark?0`
+```
+
+The profile also has `accmode`, `laneassist`, `laneassmode` and
+`parking_cams`. ATSPilot does not use them: the SDK reports no lane-assist
+state, and ATSPilot's own steering replaces lane assist while it is engaged.
 
 Consequences, all handled in code:
 

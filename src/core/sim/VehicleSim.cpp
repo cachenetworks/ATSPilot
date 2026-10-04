@@ -14,13 +14,36 @@ void VehicleSim::reset(const Vec2& rearAxle, double yaw, double speed) {
     wheel_ = 0.0;
     t_ = 0.0;
     lastCmd_ = {};
+    cruiseSet_ = 0.0;
+    cruiseIntegral_ = 0.0;
 }
 
 void VehicleSim::step(const ControlCommand& cmd, double dt) {
     lastCmd_ = cmd;
     const double steerCmd = cmd.active && cmd.steerActive ? cmd.steering : 0.0;
-    const double throttle = cmd.active && cmd.pedalsActive ? cmd.throttle : 0.0;
+    double throttle = cmd.active && cmd.pedalsActive ? cmd.throttle : 0.0;
     const double brake = cmd.active && cmd.pedalsActive ? cmd.brake : 0.0;
+
+    // The game's cruise control.
+    const GameButtons& b = cmd.buttons;
+    if (b.cruiseToggle) {
+        if (cruiseSet_ > 0.0) cruiseSet_ = 0.0;
+        else if (v_ >= p_.cruiseMinSpeed) cruiseSet_ = std::round(v_ / p_.cruiseStep) * p_.cruiseStep;
+    }
+    if (cruiseSet_ > 0.0 && b.cruiseInc) cruiseSet_ += p_.cruiseStep;
+    if (cruiseSet_ > 0.0 && b.cruiseDec) cruiseSet_ = std::max(p_.cruiseStep, cruiseSet_ - p_.cruiseStep);
+    if (b.leftBlinker) blinkerLeft_ = !blinkerLeft_, blinkerRight_ = false;
+    if (b.rightBlinker) blinkerRight_ = !blinkerRight_, blinkerLeft_ = false;
+    if (b.quickPark) ++quickParks_;
+    if (brake > 0.05) cruiseSet_ = 0.0;
+    if (cruiseSet_ > 0.0) {
+        const double err = std::min(cruiseSet_, cruiseCap_) - v_;
+        cruiseIntegral_ = clamp(cruiseIntegral_ + err * dt, -5.0, 5.0);
+        const double cruiseThrottle = clamp(0.4 * err + 0.05 * cruiseIntegral_, 0.0, 1.0);
+        throttle = std::max(throttle, cruiseThrottle);
+    } else {
+        cruiseIntegral_ = 0.0;
+    }
 
     const double targetWheel = clamp(steerCmd, -1.0, 1.0) * p_.maxWheelAngle;
     wheel_ += (targetWheel - wheel_) * (dt / (p_.steeringLag + dt));
@@ -55,6 +78,9 @@ VehicleState VehicleSim::state() const {
     s.effectiveThrottle = s.inputThrottle;
     s.effectiveBrake = s.inputBrake;
     s.steerableWheelAngle = wheel_;
+    s.cruiseControlSpeed = cruiseSet_;
+    s.blinkerLeft = blinkerLeft_;
+    s.blinkerRight = blinkerRight_;
     s.gear = v_ > 0.1 ? 6 : 1;
     s.displayedGear = s.gear;
     s.engineEnabled = true;

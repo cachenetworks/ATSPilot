@@ -41,19 +41,6 @@ ScenarioResult runScenario(const Path& path, const Config& cfg, const SimParams&
         r.disengageReason = pilot.status().statusMessage;
         return r;
     }
-    if (options.setSpeedOverride > 0.0) {
-        // Engaging while moving holds the current speed; step towards the requested one.
-        while (pilot.setSpeed() + 0.1 < options.setSpeedOverride) {
-            const double before = pilot.setSpeed();
-            pilot.request(PilotRequest::SpeedUp, s, vehicle.config(), snap, 0.0, 0.0);
-            if (pilot.setSpeed() <= before) break;
-        }
-        while (pilot.setSpeed() - 0.1 > options.setSpeedOverride) {
-            const double before = pilot.setSpeed();
-            pilot.request(PilotRequest::SpeedDown, s, vehicle.config(), snap, 0.0, 0.0);
-            if (pilot.setSpeed() >= before) break;
-        }
-    }
 
     double sumSq = 0.0;
     int samples = 0;

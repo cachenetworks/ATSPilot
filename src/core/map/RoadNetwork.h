@@ -23,12 +23,22 @@ struct LanePoint {
 
 enum class LaneKind : std::uint8_t { Road = 0, Prefab = 1 };
 
+// Traffic control at the start of a lane, from prefab nav-curve data.
+namespace LaneRule {
+inline constexpr std::uint8_t Signal = 1;       // traffic light
+inline constexpr std::uint8_t Stop = 2;         // stop sign
+inline constexpr std::uint8_t Yield = 4;        // give way
+inline constexpr std::uint8_t RailCrossing = 8;
+inline constexpr std::uint8_t NoTrucks = 16;    // cars/buses/trams only: never routed through
+}  // namespace LaneRule
+
 // One drivable lane between two connection points, in travel direction.
 struct LaneSegment {
     std::uint64_t itemUid = 0;  // road or prefab item it belongs to
     LaneKind kind = LaneKind::Road;
     std::uint8_t laneIndex = 0;  // roads: 0 = innermost; prefabs: nav curve index (mod 256)
     bool leftSide = false;       // roads: lane travels against the road's node order
+    std::uint8_t rules = 0;      // LaneRule bits
     float length = 0.0f;
     std::vector<LanePoint> points;
     std::vector<std::uint32_t> next;
@@ -56,7 +66,7 @@ struct Destination {
 // Lane-level road graph for the whole map with a uniform-grid spatial index.
 class RoadNetwork {
 public:
-    static constexpr std::uint32_t kFormatVersion = 2;
+    static constexpr std::uint32_t kFormatVersion = 3;
 
     std::uint32_t add(LaneSegment seg);
     void finalize();  // builds the spatial index and predecessor lists

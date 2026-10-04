@@ -143,7 +143,54 @@ void MapService::run() {
     path_.reset();
 }
 
-void MapService::updateRoute(const VehicleConfig& vc, const LocalizationResult& loc, const Config& cfg, double wall) {
+void MapService::checkGpsAgreement(const VehicleState& s, const PlannedPath& planned, const Config& cfg, double wall) {
+    if (!cfg.route.matchGameGps || !route_ || !planned.onRoute || gpsScale_ <= 0.0 || s.navigationDistance <= 1.0) {
+        gpsMismatchSince_ = -1.0;
+        return;
+    }
+    const double expected = gpsScale_ * planned.routeRemaining;
+    const double error = std::abs(s.navigationDistance - expected);
+    const bool matched = error <= std::max(150.0 * gpsScale_, cfg.route.gpsTolerance * s.navigationDistance);
+    if (matched != gpsMatched_) {
+        log_.info("Route {} the in-game GPS ({:.1f} km by GPS, {:.1f} km by route)", matched ? "agrees with" : "differs from",
+                  s.navigationDistance / gpsScale_ / 1000.0, planned.routeRemaining / 1000.0);
+    }
+    gpsMatched_ = matched;
+    if (matched) {
+        gpsMismatchSince_ = -1.0;
+    } else if (gpsMismatchSince_ < 0.0) {
+        gpsMismatchSince_ = wall;
+    } else if (wall - gpsMismatchSince_ > 5.0 && !gpsReplan_) {
+        log_.info("Re-planning to match the in-game GPS route");
+        gpsReplan_ = true;
+        gpsMismatchSince_ = wall + 25.0;  // give the re-plan time before judging again
+    }
+}
+
+void MapService::updateRoute(const VehicleState& s, const VehicleConfig& vc, const LocalizationResult& loc,
+                             const Config& cfg, double wall, double step) {
+    // Learn how navigation distance relates to metres driven: while the truck follows
+    // the GPS route, the navigation distance falls by gpsScale_ per metre.
+    if (s.navigationDistance > 1.0 && step < 60.0) {
+        if (gpsNavAtSample_ <= 0.0) {
+            gpsNavAtSample_ = s.navigationDistance;
+            gpsTravel_ = 0.0;
+        }
+        gpsTravel_ += step;
+        if (gpsTravel_ >= 200.0) {
+            const double ratio = (gpsNavAtSample_ - s.navigationDistance) / gpsTravel_;
+            if (ratio > 0.2 && ratio < 40.0) {
+                const bool first = gpsScale_ <= 0.0;
+                gpsScale_ = first ? ratio : 0.8 * gpsScale_ + 0.2 * ratio;
+                if (first) log_.info("In-game GPS distance scale: {:.3f} per metre", gpsScale_);
+            }
+            gpsNavAtSample_ = s.navigationDistance;
+            gpsTravel_ = 0.0;
+        }
+    } else {
+        gpsNavAtSample_ = -1.0;
+    }
+
     const std::string key = cfg.route.enabled && vc.hasJob && !vc.destinationCompanyId.empty()
                                 ? vc.destinationCityId + "/" + vc.destinationCompanyId
                                 : std::string();
@@ -153,14 +200,16 @@ void MapService::updateRoute(const VehicleConfig& vc, const LocalizationResult& 
         offRouteSince_ = -1.0;
         routeRetryWall_ = 0.0;
         destinationMissingLogged_ = false;
+        gpsMatched_ = false;
+        gpsReplan_ = false;
         if (!key.empty()) log_.info("Navigation destination: {}", key);
     }
 
     if (routeFuture_.valid() && routeFuture_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
         Route r = routeFuture_.get();
         if (r.found) {
-            log_.info("Route calculated: {:.1f} km, {} lane segments ({} expanded)", r.length / 1000.0, r.steps.size(),
-                      r.expanded);
+            log_.info("Route calculated: {:.1f} km, {} lane segments ({} expanded){}", r.length / 1000.0,
+                      r.steps.size(), r.expanded, r.gpsMatched ? ", matches the in-game GPS" : "");
             route_ = std::make_shared<const Route>(std::move(r));
             offRouteSince_ = -1.0;
         } else {
@@ -188,7 +237,8 @@ void MapService::updateRoute(const VehicleConfig& vc, const LocalizationResult& 
         }
     }
 
-    if (!route_ && !routeFuture_.valid() && wall >= routeRetryWall_) {
+    if ((!route_ || gpsReplan_) && !routeFuture_.valid() && wall >= routeRetryWall_) {
+        gpsReplan_ = false;
         const Destination* dest = net_->findDestination(tokenFromString(vc.destinationCityId),
                                                         tokenFromString(vc.destinationCompanyId));
         if (!dest) {
@@ -205,8 +255,15 @@ void MapService::updateRoute(const VehicleConfig& vc, const LocalizationResult& 
         const std::uint32_t startSeg = loc.match.segment;
         const double startS = loc.match.s;
         const std::vector<std::uint32_t> goals = dest->lanes;
-        routeFuture_ = std::async(std::launch::async,
-                                  [net, startSeg, startS, goals, opts] { return planRoute(*net, startSeg, startS, goals, opts); });
+        // With a learned scale, aim for the GPS's own remaining distance.
+        const double target = cfg.route.matchGameGps && gpsScale_ > 0.0 && s.navigationDistance > 1.0
+                                  ? s.navigationDistance / gpsScale_
+                                  : 0.0;
+        const double tolerance = cfg.route.gpsTolerance;
+        routeFuture_ = std::async(std::launch::async, [net, startSeg, startS, goals, opts, target, tolerance] {
+            return target > 0.0 ? planRouteMatching(*net, startSeg, startS, goals, target, tolerance, opts)
+                                : planRoute(*net, startSeg, startS, goals, opts);
+        });
     }
 }
 
@@ -233,8 +290,9 @@ void MapService::planOnce() {
     const Vec2 origin = coords::worldToPlan(s.worldPosition);
     const Vec2 rear = origin + coords::yawToDirection(yaw) * (-vc.rearAxleZ);
 
+    const double step = lastPos_ ? distance(*lastPos_, rear) : 0.0;
     // A large jump between samples means a teleport, ferry, service or job reset.
-    if (invalidate_.exchange(false) || (lastPos_ && distance(*lastPos_, rear) > 60.0)) {
+    if (invalidate_.exchange(false) || (lastPos_ && step > 60.0)) {
         chain_.clear();
         localizer_->reset();
         ++generation_;
@@ -258,7 +316,7 @@ void MapService::planOnce() {
         lastFailure_.clear();
     }
 
-    updateRoute(vc, loc, cfg, wall);
+    updateRoute(s, vc, loc, cfg, wall, step);
 
     PathBuildParams pp;
     pp.ahead = cfg.map.pathAhead;
@@ -267,6 +325,7 @@ void MapService::planOnce() {
     PlannedPath planned = buildPlannedPath(*net_, loc.match, pp, chain_, route_.get());
     if (!continuing) ++generation_;
     chain_ = planned.chain;
+    checkGpsAgreement(s, planned, cfg, wall);
 
     auto snap = std::make_shared<PathSnapshot>();
     snap->path = std::move(planned.path);
@@ -277,6 +336,8 @@ void MapService::planOnce() {
     snap->nextManeuverDistance = planned.nextManeuverDistance;
     snap->generation = generation_;
     snap->navigationActive = planned.onRoute;
+    snap->stops = planned.stops;
+    snap->gpsMatched = planned.onRoute && gpsMatched_;
     snap->routeRemaining = planned.routeRemaining;
     std::lock_guard lock(outMutex_);
     path_ = std::move(snap);

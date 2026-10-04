@@ -3,7 +3,7 @@
 ## Unit and controller tests (`tests/`, doctest)
 
 Run them with `./build.ps1`, or `ctest -C Release` in the build directory.
-There are 82 test cases. They cover:
+There are 97 test cases. They cover:
 
 - **Maths:** angle normalization and differences, curvature sign and radius,
   quaternion rotation, Hermite splines, SDK heading and world/plan conversions
@@ -39,6 +39,24 @@ There are 82 test cases. They cover:
   - lane-graph query and cache round-trip with fingerprint check
   - localizer heading selection and hysteresis
   - path-builder branch choice and plan stability
+- **Game cruise control:**
+  - switching on only at a usable speed
+  - spaced +/- presses
+  - its own cancellations told apart from the game's
+  - adopting the player's set speed
+  - learning the minimum speed
+- **Autopilot:**
+  - one-key on/off
+  - cruise hand-over
+  - player maximum
+  - curve slow-down through the cruise set speed
+  - hand back when the game cancels its cruise control
+  - stop at a light and go on a throttle tap
+  - holding the throttle while waiting is a takeover
+  - give-way slow-down
+  - blinkers on and off
+  - arrival with quick-park
+  - heavy-haul auto profile
 - **Routing:**
   - lane neighbours
   - A* with a required lane change, where every step must be a real edge
@@ -46,6 +64,8 @@ There are 82 test cases. They cover:
   - staying in lane when possible
   - route-following path with a smooth lane-change blend and manoeuvre announcement
   - arrival stop
+  - GPS-distance route matching picks the branch whose length matches
+  - city turn (R = 20 m) with and without curvature-limited lookahead
 - **Scenarios** (closed loop through `Autopilot`): straight, recovery from an
   offset, R = 800, R = 60, S curve, cloverleaf ramp, loaded trailer with a slow
   steering rack, Stanley variant, cruise hold.
@@ -88,8 +108,20 @@ engaged, about 15 km driven, RMS lane deviation 0.02–0.06 m.**
 With `nav_seconds`, the host also sends a job configuration event. The
 destination is a real depot 2.5–8 km away. The host then checks that the
 plugin plans a route, follows it with navigation active and stops at the
-entrance. Latest run: Winner `gld_frm_grg`, 7.3 km planned, 7,325 m driven,
-ending in "Destination Reached".
+entrance. The host emulates the game's cruise control (toggle, ±, cancel on
+brake), the blinker switches, quick-park and the GPS navigation distance. It
+taps the throttle 1 s after ATSPilot starts waiting at a stop line.
+
+Latest run, Winner `gld_frm_grg`:
+- 7.3 km planned, 7,342 m driven
+- game cruise control on for 271 s
+- blinkers used for 146 s
+- 15 stop lines released with a throttle tap
+- quick-park pressed once
+- ended in "Destination Reached"
+
+The HUD can be checked with `ATSPILOT_HUD_STANDALONE=1`, which shows it on the
+primary monitor without a game window.
 
 In tight city intersections (R ≈ 20 m), Pure Pursuit with the highway-tuned
 lookahead cuts corners by 1–2 m (see control-system.md).

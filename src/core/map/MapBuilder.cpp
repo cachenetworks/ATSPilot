@@ -77,6 +77,23 @@ double firstTupleNumber(const std::string& v) {
     return siiNumber(n, 0.0);
 }
 
+std::uint8_t laneRules(const PrefabNavCurve& c) {
+    static const std::uint64_t kStop = tokenFromString("stop");
+    static const std::uint64_t kGiveWay = tokenFromString("give_way");
+    static const std::uint64_t kRail = tokenFromString("rail_cross");
+    static const std::uint64_t kNoTrucks[] = {tokenFromString("no_trucks"), tokenFromString("car_only"),
+                                              tokenFromString("bus_only"), tokenFromString("tram_only")};
+    std::uint8_t r = 0;
+    if (c.semaphoreId >= 0) r |= LaneRule::Signal;
+    if (c.trafficRule == kStop) r |= LaneRule::Stop;
+    if (c.trafficRule == kGiveWay) r |= LaneRule::Yield;
+    if (c.trafficRule == kRail) r |= LaneRule::RailCrossing;
+    for (auto t : kNoTrucks) {
+        if (c.trafficRule == t) r |= LaneRule::NoTrucks;
+    }
+    return r;
+}
+
 std::string textOf(const std::vector<char>& d) { return std::string(d.begin(), d.end()); }
 
 std::unordered_map<std::uint64_t, RoadLookInfo> loadRoadLooks(const GameFileSystem& fs, MapBuildStats& stats) {
@@ -332,6 +349,8 @@ std::optional<RoadNetwork> buildRoadNetwork(const MapBuildOptions& options, MapB
             seg.itemUid = prefab.uid;
             seg.kind = LaneKind::Prefab;
             seg.laneIndex = static_cast<std::uint8_t>(ci & 0xFF);
+            seg.rules = laneRules(curve);
+            if (seg.rules & (LaneRule::Signal | LaneRule::Stop | LaneRule::Yield)) ++stats.controlledLanes;
             for (const auto& smp : sampleHermite(a, da, b, db)) seg.points.push_back(toLanePoint(smp.pos));
             curveIds[ci] = net.add(std::move(seg));
         }

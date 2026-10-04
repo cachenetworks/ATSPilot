@@ -1,5 +1,6 @@
 #include "control/Lateral.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include "math/MathUtil.h"
@@ -49,6 +50,14 @@ LateralOutput computeLateral(const LateralParams& params, const Path& path, cons
     out.projectionIndex = rearProj->index;
     out.pathS = rearProj->s;
     out.lookahead = lookaheadDistance(params, in.speed);
+    if (params.curveLookaheadFactor > 0.0) {
+        double minRadius = 1e9;
+        for (double ds = 0.0; ds <= out.lookahead; ds += 2.0) {
+            const double k = std::abs(path.curvatureAt(rearProj->s + ds, 8.0));
+            if (k > 1e-6) minRadius = std::min(minRadius, 1.0 / k);
+        }
+        out.lookahead = std::max(params.lookaheadMin, std::min(out.lookahead, params.curveLookaheadFactor * minRadius));
+    }
     out.headingError = headingDifference(in.yaw, rearProj->yaw);
     out.crossTrackError = rearProj->crossTrackError;
 

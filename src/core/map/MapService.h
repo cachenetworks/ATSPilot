@@ -56,7 +56,9 @@ private:
     void run();
     bool loadOrBuild();
     void planOnce();
-    void updateRoute(const VehicleConfig& vc, const LocalizationResult& loc, const Config& cfg, double wall);
+    void updateRoute(const VehicleState& s, const VehicleConfig& vc, const LocalizationResult& loc, const Config& cfg,
+                     double wall, double step);
+    void checkGpsAgreement(const VehicleState& s, const PlannedPath& planned, const Config& cfg, double wall);
 
     Logger& log_;
     mutable std::mutex cfgMutex_;
@@ -100,6 +102,14 @@ private:
     double routeRetryWall_ = 0.0;
     double offRouteSince_ = -1.0;
     bool destinationMissingLogged_ = false;
+
+    // In-game GPS agreement: the navigation distance is compared with the route.
+    double gpsScale_ = 0.0;        // navigation distance units per metre driven (learned)
+    double gpsNavAtSample_ = -1.0;
+    double gpsTravel_ = 0.0;
+    bool gpsMatched_ = false;
+    double gpsMismatchSince_ = -1.0;
+    bool gpsReplan_ = false;
 };
 
 }  // namespace atspilot

@@ -94,6 +94,8 @@ void registerChannels() {
         {SCS_TELEMETRY_TRUCK_CHANNEL_engine_enabled, &s.engineEnabled},
         {SCS_TELEMETRY_TRUCK_CHANNEL_electric_enabled, &s.electricEnabled},
         {SCS_TELEMETRY_TRUCK_CHANNEL_wipers, &s.wipers},
+        {SCS_TELEMETRY_TRUCK_CHANNEL_lblinker, &s.blinkerLeft},
+        {SCS_TELEMETRY_TRUCK_CHANNEL_rblinker, &s.blinkerRight},
     };
     for (const auto& [name, target] : bools) {
         if (g_registerChannel(name, SCS_U32_NIL, SCS_VALUE_TYPE_bool, SCS_TELEMETRY_CHANNEL_FLAG_none, onBool, target) !=

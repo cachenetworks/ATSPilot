@@ -16,7 +16,7 @@ struct ScenarioOptions {
     double headingOffset = 0.0;      // initial yaw offset, rad
     double maxTime = 600.0;          // s
     double rate = 60.0;              // control rate, Hz
-    PilotRequest engage = PilotRequest::ToggleAutopilot;
+    PilotRequest engage = PilotRequest::Toggle;
     // Optional per-step observer (time, state, command, debug), e.g. for CSV export.
     std::function<void(const VehicleState&, const ControlCommand&, const ControllerDebug&)> observer;
 };

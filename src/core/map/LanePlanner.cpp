@@ -48,8 +48,12 @@ std::uint32_t chooseSuccessor(const RoadNetwork& net, std::uint32_t from, const 
     const double yaw = endYaw(net.segment(from));
     std::uint32_t best = next.front();
     double bestTurn = std::numeric_limits<double>::max();
+    const bool anyTruckLane = std::any_of(next.begin(), next.end(), [&](std::uint32_t n) {
+        return !(net.segment(n).rules & LaneRule::NoTrucks);
+    });
     for (auto n : next) {
         if (net.segment(n).points.size() < 2) continue;
+        if (anyTruckLane && (net.segment(n).rules & LaneRule::NoTrucks)) continue;
         const double turn = std::abs(headingDifference(yaw, headingInto(net, n, horizon)));
         if (turn < bestTurn) {
             bestTurn = turn;
@@ -266,6 +270,16 @@ PlannedPath buildPlannedPath(const RoadNetwork& net, const LaneMatch& start, con
             }
         }
         if (out.chain[c] == start.segment) truckS = arcLength() + start.s;
+        if (const std::uint8_t r = seg.rules; r & (LaneRule::Signal | LaneRule::Stop | LaneRule::Yield | LaneRule::RailCrossing)) {
+            PathStop stop;
+            stop.s = arcLength();  // re-based after trimming below
+            stop.segment = out.chain[c];
+            stop.kind = (r & LaneRule::Signal)   ? StopKind::Signal
+                        : (r & LaneRule::Stop)   ? StopKind::StopSign
+                        : (r & LaneRule::Yield)  ? StopKind::Yield
+                                                 : StopKind::RailCrossing;
+            out.stops.push_back(stop);
+        }
         if (!pts.empty()) {
             // The gap between this lane's start and the previous lane's end, which is
             // what a merge, lane drop or imperfect join leaves behind.
@@ -302,6 +316,12 @@ PlannedPath buildPlannedPath(const RoadNetwork& net, const LaneMatch& start, con
     const double from = std::max(0.0, truckS - params.behind);
     out.path = raw.trimmed(from, raw.length()).resampled(params.spacing);
     out.truckS = truckS - from;
+    std::vector<PathStop> stopsAhead;
+    for (auto stop : out.stops) {
+        stop.s -= from;
+        if (stop.s >= 0.0) stopsAhead.push_back(stop);
+    }
+    out.stops = std::move(stopsAhead);
     return out;
 }
 

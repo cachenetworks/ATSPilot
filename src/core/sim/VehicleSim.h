@@ -24,6 +24,10 @@ struct SimParams {
     double rolling = 0.08;           // m/s^2
     double massFactor = 1.0;         // >1 for heavy loads, scales acceleration down
     int trailerCount = 0;
+    // Model of the game's cruise control: switches on at >= cruiseMinSpeed, steps
+    // by cruiseStep per +/- press, and is cancelled by braking.
+    double cruiseMinSpeed = 8.33;
+    double cruiseStep = 1.0 / 3.6;
 };
 
 class VehicleSim {
@@ -41,6 +45,16 @@ public:
     double yaw() const { return yaw_; }
     double speed() const { return v_; }
     double time() const { return t_; }
+    double cruiseSet() const { return cruiseSet_; }
+    // Lead-vehicle style slowdown of the game's (adaptive) cruise control for tests:
+    // while set, cruise holds at most this speed.
+    void setCruiseCap(double v) { cruiseCap_ = v; }
+    // Simulates the game cancelling its cruise control on its own.
+    void cancelCruise() { cruiseSet_ = 0.0; }
+    // Blinker switch state, toggled by button presses.
+    bool blinkerLeft() const { return blinkerLeft_; }
+    bool blinkerRight() const { return blinkerRight_; }
+    int quickParkPresses() const { return quickParks_; }
 
 private:
     SimParams p_;
@@ -50,6 +64,12 @@ private:
     double wheel_ = 0.0;  // actual road-wheel angle
     double t_ = 0.0;
     ControlCommand lastCmd_;
+    double cruiseSet_ = 0.0;
+    double cruiseCap_ = 1e9;
+    double cruiseIntegral_ = 0.0;
+    bool blinkerLeft_ = false;
+    bool blinkerRight_ = false;
+    int quickParks_ = 0;
 };
 
 // Synthetic test geometry.

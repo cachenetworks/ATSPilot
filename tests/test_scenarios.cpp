@@ -63,7 +63,7 @@ TEST_CASE("sharp curve forces slowdown before entry") {
     const ScenarioResult r = runScenario(makeArc(500.0, 60.0, degToRad(90.0), 400.0), Config{}, SimParams{}, o);
     report(r);
     CHECK(r.completed);
-    CHECK(r.maxCrossTrack < 1.0);
+    CHECK(r.maxCrossTrack < 0.6);
     // Planner bound is 1.6 m/s^2; allow for tracking transients.
     CHECK(r.maxLateralAccel < 2.4);
 }
@@ -104,7 +104,7 @@ TEST_CASE("heavy truck with trailer and slow steering still tracks") {
     const ScenarioResult r = runScenario(makeSCurve(300.0, 200.0, degToRad(40.0), 400.0), Config{}, p, o);
     report(r);
     CHECK(r.completed);
-    CHECK(r.maxCrossTrack < 1.0);
+    CHECK(r.maxCrossTrack < 0.6);
 }
 
 TEST_CASE("Stanley controller variant also tracks") {
@@ -116,7 +116,7 @@ TEST_CASE("Stanley controller variant also tracks") {
     const ScenarioResult r = runScenario(makeSCurve(300.0, 150.0, degToRad(50.0), 400.0), c, SimParams{}, o);
     report(r);
     CHECK(r.completed);
-    CHECK(r.maxCrossTrack < 1.0);
+    CHECK(r.maxCrossTrack < 0.6);
 }
 
 TEST_CASE("cruise holds a set speed on a straight") {
@@ -124,9 +124,28 @@ TEST_CASE("cruise holds a set speed on a straight") {
     o.name = "cruise 55 mph";
     o.initialSpeed = 15.0;
     o.setSpeedOverride = speedToMps(55.0, SpeedUnits::Mph);
-    o.engage = PilotRequest::ToggleAutopilot;
+    o.engage = PilotRequest::Toggle;
     const ScenarioResult r = runScenario(makeStraight(6000.0), Config{}, SimParams{}, o);
     report(r);
     CHECK(r.completed);
     CHECK(r.maxSpeedError < 2.0);
+}
+
+TEST_CASE("tight city turn: curvature-limited lookahead keeps the corner") {
+    ScenarioOptions o;
+    o.name = "city turn R=20";
+    o.initialSpeed = 6.0;
+    Config c;
+    c.speed.maxSpeed = 20.0;  // mph
+    const ScenarioResult r = runScenario(makeArc(80.0, 20.0, degToRad(90.0), 150.0, 2.0), c, SimParams{}, o);
+    report(r);
+    CHECK(r.completed);
+    CHECK(r.maxCrossTrack < 0.6);
+
+    Config noLimit = c;
+    noLimit.steering.lateral.curveLookaheadFactor = 0.0;
+    o.name = "city turn R=20 without curve lookahead";
+    const ScenarioResult before = runScenario(makeArc(80.0, 20.0, degToRad(90.0), 150.0, 2.0), noLimit, SimParams{}, o);
+    report(before);
+    CHECK(r.maxCrossTrack < before.maxCrossTrack);
 }

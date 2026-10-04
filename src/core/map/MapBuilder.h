@@ -52,6 +52,7 @@ struct MapBuildStats {
     std::size_t companiesPrefabMissing = 0;
     std::size_t companiesNodeMissing = 0;
     std::size_t companiesWithoutLanes = 0;
+    std::size_t controlledLanes = 0;   // junction lanes with a signal, stop or give-way rule
     std::size_t mergeConnections = 0;  // sideways links into a neighbouring lane (<= 5 m)
     std::size_t gapConnections = 0;
     std::size_t roadDeadEndsInMap = 0;       // the map node has nothing else attached

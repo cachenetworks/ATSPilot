@@ -16,7 +16,10 @@ struct LateralParams {
     LateralAlgorithm algorithm = LateralAlgorithm::PurePursuit;
     double lookaheadBase = 15.0;         // m
     double lookaheadSpeedFactor = 0.5;   // s (m per m/s)
-    double lookaheadMin = 8.0;           // m
+    double lookaheadMin = 4.0;           // m
+    // In tight curves the lookahead is limited to this fraction of the smallest
+    // radius ahead, which stops Pure Pursuit cutting corners at junctions. 0 = off.
+    double curveLookaheadFactor = 0.35;
     double lookaheadMax = 60.0;          // m
     double stanleyGain = 1.0;
     double stanleySoftening = 2.0;       // m/s; keeps the gain finite at low speed

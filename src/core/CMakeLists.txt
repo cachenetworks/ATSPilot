@@ -1,6 +1,7 @@
 add_library(atspilot_core STATIC
   config/Config.cpp
   config/Toml.cpp
+  control/GameCruise.cpp
   control/Lateral.cpp
   map/CityHash.cpp
   map/HashFs.cpp

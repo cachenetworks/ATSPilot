@@ -2,213 +2,165 @@
 
 ATSPilot is an autopilot plugin for **American Truck Simulator**. It runs inside
 the game as a native SCS SDK plugin. It reads live telemetry, finds the truck on
-a lane-level road graph parsed from the game's own map files, and steers,
-accelerates and brakes through an SDK input device. It uses no memory hacking
-and no external app.
+a lane-level road graph parsed from the game's own map files, steers along it,
+and controls speed through the **game's own cruise control**. That means the
+game's adaptive cruise control and emergency brake assist handle traffic.
+Everything is controlled with **one key**. It uses no memory hacking and needs
+no external app.
 
-> **Status: pre-alpha (v0.1.0).** The complete chain is implemented and tested
-> outside the game: telemetry → localization → path → controllers → SDK input
-> device. That includes the real plugin DLL driving a simulated truck along real
-> ATS road geometry. It has **not yet been validated with ATS's own vehicle
-> physics**, so the [Alpha checklist](#alpha-checklist) is not yet met. Test on
-> quiet roads, and keep your hands near the controls.
+> **Status: pre-alpha (v0.2.0).** The full chain has been tested outside the
+> game, including the real plugin DLL completing a 7.3 km delivery on real ATS
+> map data (game cruise control, 15 stop lines, blinkers, quick-park, arrival).
+> It has **not yet been validated against ATS's own vehicle physics and input
+> handling**. Test on quiet roads and keep your hands near the controls.
 
-## Current capabilities
+## How it drives
 
-| Feature | State |
+| Area | What ATSPilot does |
 |---|---|
-| Plugin loads with ATS (telemetry API 1.01, input API 1.00, SDK 1.15) | implemented, exercised by the plugin host |
-| Live telemetry → vehicle state (position, heading, speed, inputs, gear, nav limit, truck/trailer/job config) | implemented |
-| Steering / throttle / brake output through an SDK **semantical input device** | implemented |
-| Configurable hotkeys: autopilot, lane assist, cruise, set speed ±, resume, cancel, emergency disable | implemented |
-| Cruise control: PID with brake hysteresis, rate-limited pedals, follows the navigation speed limit | implemented, simulator-tested |
-| Map: HashFS v1/v2 reader, sector (`.base` v907) and prefab (`.ppd` v25) parsers, lane graph for the whole USA map, cached | implemented; 925/925 sectors of ATS 1.61 parse with 0 errors, 97.2% of lane ends connect, 2,106 depots resolved |
-| Localization with lane hysteresis | implemented |
-| Rolling path along the lane graph | implemented |
-| Navigation: A* route over the lane graph to the job's destination depot (lane changes, merges, recalculation when off-route, "Destination Reached" stop at the entrance) | implemented; plugin-host delivery of 7.3 km passes |
-| Pure Pursuit (default) and Stanley steering, speed-adaptive lookahead, rate limiting | implemented, simulator-tested |
-| Curve speed planning (lateral-acceleration limit, trailer/cargo/rain derating) | implemented, simulator-tested |
-| Safety: driver override, watchdog, command expiry, controlled emergency stop, pause/teleport/ferry handling, steering-sign self-check | implemented, unit-tested |
-| Logging (rotating), status file, audio cues, CSV telemetry recorder | implemented |
-| Traffic awareness, traffic lights/stop signs, overtaking, parking | **not implemented** (see [roadmap](#roadmap)) |
+| **One key** | `F9` switches ATSPilot on and off. Braking, steering or the throttle take over immediately. |
+| **Speed** | Switches on the game's cruise control and nudges its set speed with the game's +/- controls. It slows for curves, speed limits and stops. Your own cruise +/- presses set the maximum speed. It uses its own pedals only below cruise-control speed, for hard braking and at stop lines. |
+| **Traffic** | Handled by the game's **adaptive cruise control** and **emergency brake assist** on trucks equipped with them. If the game switches its cruise control off on its own, ATSPilot hands back control ("Cruise control cancelled - take over"). |
+| **Steering** | Pure Pursuit along the lane centre from the parsed map. The lookahead shrinks in tight curves, so city turns are tracked to about 0.4 m instead of cutting the corner. The game's own lane assist is left off so the two don't fight. |
+| **Route** | Plans a route to the job's destination depot over the lane graph, including lane changes. It keeps that route consistent with the **in-game GPS** by matching the GPS's remaining navigation distance, and re-plans along the matching branch when they disagree. With no job it follows the road. |
+| **Junctions** | From map data it knows which junction lanes have **traffic lights, stop signs, give-way rules and railway crossings**. It stops at lights and stop signs and waits; **tap the throttle** to go. It slows to 4 m/s through give-way lanes and rail crossings, and never routes through truck-prohibited lanes. |
+| **Blinkers** | Indicates 150 m before lane changes, exits and turns, and cancels only blinkers it switched on itself. |
+| **Arrival** | Stops at the depot entrance, presses the game's **quick-park**, and switches off ("Destination Reached"). |
+| **Profiles** | `auto` (heavy haul above 25 t, otherwise normal), `comfort`, `normal`, `assertive`, `heavy_haul`. Each scales curve speed, braking and steering rate. Heavy haul caps speed at 55 mph. |
+| **HUD** | An in-game status panel showing mode, set speed, cruise control, navigation, next manoeuvre, remaining distance, profile and messages. |
 
-## Current limitations
+## Limitations
 
-- **No traffic awareness.** ATSPilot does not see other vehicles, traffic
-  lights or stop signs. The SDK does not expose them. Stay alert and brake;
-  braking always disengages ATSPilot.
-- **Routes are ATSPilot's own, not the in-game GPS route.** The SDK does not
-  expose the GPS route polyline. ATSPilot plans its own route to the job's
-  destination depot from the map data. It may pick a different, equally valid
-  road than the in-game GPS. With no job (or with special transport, which has
-  no destination company id) it follows the road and takes the straightest
-  continuation at forks.
-- **Lane changes are planned, not traffic-checked.** A lane change needed by the
-  route is executed as a smooth blend without checking for other vehicles.
-- **Not yet tuned against ATS physics.** Controller gains, the steering-angle
-  estimate and the input-mixing assumptions come from the SDK documentation, the
-  game's `controls.sii` and simulation. In-game tuning is the next step.
-- **No in-game HUD.** The SDK has no supported UI extension. ATSPilot reports
-  status through audio cues, warnings in the game console/log, and a
-  `status.json` file that an optional external overlay can read.
-- Map mods packed as `.zip` are not read, and only the base game plus installed
-  DLC archives are loaded by default.
+- **Traffic awareness comes from the game's systems.** The SDK exposes no
+  vehicles, lights or signs. Following traffic depends on the truck having
+  adaptive cruise control. Below cruise-control speed, such as pulling away
+  from a stop, ATSPilot drives its own pedals without seeing traffic. Watch the
+  road.
+- **Traffic-light state is unknown.** ATSPilot knows *where* lights are, not
+  their colour. It therefore stops at every signal and waits for your throttle
+  tap.
+- **GPS matching is indirect.** The SDK gives only the GPS's remaining
+  distance. ATSPilot picks the route whose length matches it, considering
+  alternatives at the next six forks. Very unusual GPS routes may still differ.
+- **Lane changes are not traffic-checked.** A route lane change is a smooth
+  blend with the blinker on, but nothing checks the target lane is clear.
+- **Parking** uses the game's quick-park feature, which depends on the
+  game's parking settings. There is no reverse-parking automation.
+- **The HUD needs borderless or windowed mode.** It is a click-through overlay
+  window, because the SDK has no UI extension, so exclusive fullscreen may hide
+  it. `status.json` carries the same data.
+- `.zip` map mods are not read. Base game and installed DLC are.
 
 ## Supported ATS version
 
-Built against **SCS SDK 1.15** headers (telemetry game version 1.07, ATS 1.61+).
-The map parser targets sector format **907** and prefab format **25**, as
-shipped with ATS 1.61. Other versions are rejected cleanly with a log message
-rather than misread.
+Built against **SCS SDK 1.15** (telemetry 1.07, input 1.00, ATS 1.61+). The map
+parser targets sector format **907** and prefab format **25**. Other versions
+are rejected cleanly with a log message rather than misread.
 
 ## Installation
 
 1. Download a release, or build from source (see [Development](#development)).
 2. Run `install.ps1` from the release folder. It finds ATS through Steam and
-   copies `plugins\atspilot.dll` to
-   `...\American Truck Simulator\bin\win_x64\plugins\`.
-   To install manually, copy the DLL there yourself.
+   copies `plugins\atspilot.dll` to `...\American Truck Simulator\bin\win_x64\plugins\`.
 3. Start ATS and accept the "advanced SDK features" prompt.
-4. On the first start ATSPilot parses the map in the background, which takes
-   about 15–30 s. It then caches the result in
-   `Documents\American Truck Simulator\atspilot\cache\`. The cache rebuilds
-   automatically when a game update or DLC changes the archives.
+4. On the first start the map is parsed in the background (about 20 s) and
+   cached in `Documents\American Truck Simulator\atspilot\cache\`.
 
-No ATS mod and no controls changes are needed. The input device feeds the
-game's existing `steering`, `aforward` and `abackward` mixes.
-
-Uninstall with `install.ps1 -Uninstall`, or delete the DLL.
+No mod and no controls changes are needed. The plugin's input device feeds the
+game's existing steering, pedal, cruise-control, blinker and quick-park
+controls.
 
 ## Usage
 
-1. Accept a job (optional: with a job, ATSPilot routes to the destination depot
-   and stops at its entrance, "Destination Reached"; parking stays manual).
-2. Drive onto a road, settle in a lane, and press **F9** to engage the autopilot. ATSPilot refuses with a reason (in the
-   log and console) if telemetry, the map or the lane match is not valid.
-3. Adjust the set speed with **=** / **-**. Engaging while moving holds your
-   current speed.
-4. Take over at any time: braking, steering or pressing the throttle disengages
-   immediately.
+1. Optionally take a job. ATSPilot will route to its depot and stop at the
+   entrance.
+2. Drive onto a road, settle in a lane, and press **F9**.
+3. Set your maximum speed with the **game's cruise control +/- keys**.
+4. At a traffic light or stop sign ATSPilot stops and waits. **Tap the throttle**
+   to go; holding it means you are taking over.
+5. Press **F9** again, brake, or steer to take over.
 
-### Controls
-
-| Action | Default key |
-|---|---|
-| Toggle autopilot (steer + speed) | `F9` |
-| Toggle lane assist (steer only) | `F8` |
-| Toggle cruise (speed only) | `Insert` |
-| Increase / decrease set speed | `=` / `-` |
-| Resume previous mode | `Shift+F9` |
-| Cancel | `Delete` |
-| Emergency disable (also blocks resume) | `Shift+Delete` |
-
-These defaults were checked against a stock ATS 1.61 `controls.sii`. **F10 and
-F11 are not used** because ATS binds them to screenshot and radio. Change any
-binding in the `[controls]` section of the config. Keys are only read while ATS
-has focus.
+The key is configurable in `[controls] toggle`. F10 and F11 are avoided because
+ATS uses them.
 
 ## Configuration
 
 `Documents\American Truck Simulator\atspilot\atspilot.toml` is created with
-documented defaults on first start. Main sections:
+documented defaults on first start:
 
-- `[speed]`: units, maximum set speed, speed-limit following
-- `[steering]`: controller (`pure_pursuit` or `stanley`), lookahead, rate limits, output sign
-- `[cruise]`: PID gains, brake thresholds
-- `[planner]`: curve lateral-acceleration limit, deceleration, aggressiveness
-- `[safety]`: override thresholds, timeouts, deviation limits
-- `[route]`: navigation on/off, lane-change cost, off-route recalculation delay
-- `[controls]`, `[map]`, `[audio]`, `[debug]`
+- `[controls]`: the single key
+- `[profile]`
+- `[speed]`: units, default maximum, speed-limit following
+- `[ingame]`: use game cruise control, blinkers, quick-park
+- `[intersections]`: stop at signals or stop signs, give-way speed, tap duration
+- `[steering]` / `[cruise]` / `[planner]`: tuning
+- `[safety]`
+- `[route]`: navigation, GPS matching, lane-change cost
+- `[hud]`, `[map]`, `[audio]`, `[debug]`
 
-Invalid values are clamped or replaced by defaults and listed in the log. A bad
-config never stops ATS from loading. Run `sdk reinit` in the ATS console to
-reload the config without restarting.
+Invalid values are clamped or replaced by defaults and listed in the log. Run
+`sdk reinit` in the ATS console to reload.
 
-## Safety and disengagement behaviour
+## Safety and disengagement
 
 | Situation | Response |
 |---|---|
-| Driver brakes, steers or presses the throttle | Immediate disengage, neutral output |
-| Telemetry stale, game paused, input device inactive, plugin error | Immediate disengage, neutral output |
-| Truck relocated (teleport, service, ferry, train, job delivered/cancelled) | Disengage and route invalidation |
-| Path stale or lost, cross-track > 3 m, heading error > 35° | Controlled emergency stop: no throttle, brakes ramp to 85%, keeps tracking the lane if geometry is still trusted, otherwise unwinds the steering slowly |
-| Steering response opposes the command | Disengage with "Steering direction mismatch" |
-| Control loop stalls | Commands expire after 0.25 s and the device outputs zero |
+| Brake, steer, hold the throttle, or press F9 | Immediate disengage, neutral output |
+| Game cancels its cruise control by itself | Disengage, "take over" |
+| Telemetry stale, game paused, plugin error | Immediate disengage |
+| Teleport, service, ferry, train, job delivered or cancelled | Disengage and route reset |
+| Path stale or lost, deviation > 3 m, heading error > 35° | Controlled emergency stop |
+| Steering response opposes the command | Disengage ("Steering direction mismatch") |
+| Control loop stalls | Commands expire after 0.25 s |
 
-ATSPilot only ever adds to your own input. With the plugin disengaged, its
-device outputs exactly zero.
+ATSPilot only adds to your input. When it is off its device outputs zero and
+presses nothing.
 
 ## Troubleshooting
 
-- **"ATSPilot unavailable: No valid road path"**: the map is still loading, or
-  the truck is off-road or in an area without lane data. Check `logs\atspilot.log`.
+- **"ATSPilot unavailable: …"**: the reason is in the message and in
+  `logs\atspilot.log`.
+- **Cruise control never switches on**: the truck may need to be above the
+  game's cruise-control minimum. ATSPilot learns that minimum.
 - **Truck steers the wrong way**: set `steering.output_sign = 1` and report it
-  in an issue. The default is derived from `controls.sii`.
-- **Map errors after a game update**: the log names the format version. The
-  parser refuses unknown versions rather than guessing.
-- Logs: `Documents\American Truck Simulator\atspilot\logs\atspilot.log`.
-  Rotated at 5 MB, 3 files kept.
+  in an issue.
+- **HUD not visible**: use the game's borderless or windowed display mode, or
+  set `hud.enabled = false`.
 
 ## Development
 
-Requirements: Windows 10/11 x64, Visual Studio 2022 or 2026 (or Build Tools)
-with "Desktop development with C++". CMake comes with Visual Studio.
-Dependencies (zlib, doctest) are fetched by CMake.
+Requirements: Windows x64, Visual Studio 2022/2026 (or Build Tools) with C++.
+CMake comes with Visual Studio; zlib and doctest are fetched automatically.
 
 ```powershell
-./build.ps1            # configure, build Release, run unit tests + simulator, assemble build/release/ATSPilot
-./build.ps1 -Zip       # also produce build/ATSPilot-<version>.zip
-./build.ps1 -Configuration Debug -SkipTests
+./build.ps1          # build, 97 unit/controller tests, simulator, package build/release/ATSPilot
+./build.ps1 -Zip
 ```
 
-Development tools (built into `build/cmake/src/tools/<Config>/`):
+Tools:
+- `atspilot_sim`: closed-loop controller scenarios
+- `atspilot_mapdump`: archive browsing, map build statistics, routes, connectivity
+- `atspilot_plugin_host`: drives the real DLL through the SDK with a simulated
+  truck on real map data, emulating the game's cruise control, blinkers and
+  GPS distance
 
-- `atspilot_sim`: closed-loop controller scenarios (straight, curves, S-curve, cloverleaf ramp, loaded trailer)
-- `atspilot_mapdump`: `ls`/`cat` archive contents, `build` the map with statistics, `locate` a world
-  position, `companies`, `route`/`routefrom` (A* between depots), `reach` (connectivity), `item` (raw map items)
-- `atspilot_plugin_host`: loads the real `atspilot.dll`, plays the game's side of the SDK, and drives a simulated truck on real map geometry
-
-See [docs/testing.md](docs/testing.md).
-
-Documentation: [architecture](docs/architecture.md) · [control system](docs/control-system.md) ·
+Docs: [architecture](docs/architecture.md) · [control system](docs/control-system.md) ·
 [map parsing](docs/map-parsing.md) · [SDK findings](docs/sdk.md) · [testing](docs/testing.md)
-
-## Alpha checklist
-
-| Requirement | Status |
-|---|---|
-| ATS loads normally with ATSPilot installed | needs in-game confirmation |
-| Live telemetry | implemented; plugin host verified |
-| Autopilot toggle | implemented |
-| Disabled mode sends no commands | implemented and tested (zero output) |
-| Player override | implemented and unit-tested; in-game thresholds to confirm |
-| Analogue steering, throttle, braking | implemented through the semantical device; in-game confirmation pending |
-| Cruise holds speed smoothly | simulator-tested |
-| Position matched to road geometry | implemented on the real map |
-| Steering follows highway geometry, curves without oscillation | simulator- and plugin-host-tested on real ATS geometry |
-| Loss of valid state disengages | implemented and tested |
-| Logs explain behaviour | implemented |
-| Unit/controller tests pass | 82 test cases pass |
-| Installation documented, build reproducible | done |
 
 ## Roadmap
 
-1. **In-game validation and tuning** (next): confirm the semantical input
-   mixing and steering sign, measure the steering ratio, and tune gains with the
-   telemetry recorder.
-2. Highway pilot hardening: trailer-aware steering gains, lane changes timed
-   with more look-ahead, correlating the route with the game's navigation distance.
-3. Traffic awareness: an optional, asynchronous computer-vision module for lead
-   vehicles (time-gap adaptive cruise), traffic lights and lane markings.
-4. Intersections (traffic lights, stop signs), then parking assist.
+1. In-game validation: semantical-input mixing, steering sign, cruise-control
+   step size and minimum, quick-park behaviour.
+2. Traffic-light colour from an optional, asynchronous screen-capture module
+   (low-latency, newest-frame-only).
+3. Traffic-checked lane changes, and better trailer-aware steering.
 
 ## Privacy and security
 
-ATSPilot works fully offline. It sends no telemetry anywhere, opens no network
-ports, and runs no downloaded code.
+Fully offline. No telemetry leaves your computer, no network ports are opened,
+and no downloaded code runs.
 
 ## License
 
-MIT; see [LICENSE](LICENSE). Third-party components and references are listed
-in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). ATSPilot is not affiliated
-with or endorsed by SCS Software.
+MIT; see [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Not affiliated with or endorsed by SCS Software.

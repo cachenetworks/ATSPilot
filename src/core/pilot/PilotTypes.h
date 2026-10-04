@@ -3,30 +3,25 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
+#include "control/GameCruise.h"
 #include "control/Longitudinal.h"
 #include "path/Path.h"
 
 namespace atspilot {
 
 enum class PilotMode {
-    Off,          // nothing commanded
-    Cruise,       // speed only
-    LaneAssist,   // steering only
-    Autopilot,    // steering and speed
-    EmergencyStop
+    Off,           // nothing commanded
+    Autopilot,     // ATSPilot steers; speed via the game's cruise control or its own pedals
+    EmergencyStop  // controlled stop after losing a valid state
 };
 
 const char* toString(PilotMode m);
 
 enum class PilotRequest {
-    ToggleAutopilot,
-    ToggleLaneAssist,
-    ToggleCruise,
-    SpeedUp,
-    SpeedDown,
-    Resume,
-    Cancel,
+    Toggle,           // the single ATSPilot key
+    Cancel,           // programmatic off (harness, world transitions)
     EmergencyDisable,
 };
 
@@ -40,7 +35,20 @@ struct ControlCommand {
     double steering = 0.0;  // [-1, 1], left positive (SDK convention)
     double throttle = 0.0;
     double brake = 0.0;
+    GameButtons buttons;    // one-frame presses of the game's own controls
     double time = 0.0;      // simulation time the command was computed for
+};
+
+enum class StopKind : std::uint8_t { Signal, StopSign, Yield, RailCrossing };
+
+const char* toString(StopKind k);
+
+// A junction lane on the path that is controlled by a traffic light, stop sign,
+// give-way rule or railway crossing; `s` is where that lane begins (the stop line).
+struct PathStop {
+    double s = 0.0;
+    StopKind kind = StopKind::Signal;
+    std::uint32_t segment = 0;
 };
 
 // A driving path published by the planning side, immutable once shared.
@@ -54,6 +62,8 @@ struct PathSnapshot {
     std::uint64_t generation = 0;   // increments when the route/lane choice changes discontinuously
     bool navigationActive = false;  // path follows a planned route to the job destination
     double routeRemaining = 0.0;    // m
+    bool gpsMatched = false;        // route agrees with the in-game navigation distance
+    std::vector<PathStop> stops;    // controlled junction lanes ahead, in path order
 };
 
 using PathSnapshotPtr = std::shared_ptr<const PathSnapshot>;
@@ -74,18 +84,23 @@ struct ControllerDebug {
     BrakeLevel brakeLevel = BrakeLevel::None;
 };
 
-// Presentation model for any HUD, overlay or status file. Never exposes controllers.
+// Presentation model for the HUD, status file and logs. Never exposes controllers.
 struct PilotStatus {
     PilotMode mode = PilotMode::Off;
     bool available = false;
     bool telemetryConnected = false;
     bool mapLoaded = false;
-    double speed = 0.0;        // m/s
-    double setSpeed = 0.0;     // m/s
-    double targetSpeed = 0.0;  // m/s
+    double speed = 0.0;          // m/s
+    double setSpeed = 0.0;       // m/s, maximum chosen by the player
+    double targetSpeed = 0.0;    // m/s, what ATSPilot is aiming for now
     double crossTrackError = 0.0;
     double routeDistance = 0.0;
     bool navigationActive = false;
+    bool gpsMatched = false;
+    bool gameCruiseActive = false;
+    double cruiseSetSpeed = 0.0; // m/s, the game's cruise control set speed (0 = off)
+    bool waitingAtIntersection = false;
+    std::string profile;
     std::string road;
     std::string nextManeuver;
     double nextManeuverDistance = 0.0;

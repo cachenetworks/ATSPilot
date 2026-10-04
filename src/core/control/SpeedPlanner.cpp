@@ -26,7 +26,7 @@ double curveSpeed(double curvature, double maxLateralAccel, double minSpeed) {
 }
 
 SpeedPlan planSpeed(const SpeedPlannerParams& p, const VehicleLoadFactors& f, const Path& path, double currentS,
-                    double cruiseSpeed) {
+                    double cruiseSpeed, const std::vector<SpeedConstraint>& constraints) {
     SpeedPlan plan;
     plan.targetSpeed = cruiseSpeed;
     if (!path.valid()) {
@@ -59,6 +59,16 @@ SpeedPlan planSpeed(const SpeedPlannerParams& p, const VehicleLoadFactors& f, co
         // drives beyond known geometry at speed.
         const double d = std::max(0.0, path.length() - currentS);
         const double allowed = std::sqrt(2.0 * p.comfortDecel * d);
+        if (allowed < plan.targetSpeed) {
+            plan.targetSpeed = allowed;
+            plan.limitingDistance = d;
+            plan.limitingCurveRadius = 0.0;
+        }
+    }
+
+    for (const auto& c : constraints) {
+        const double d = std::max(0.0, c.s - currentS);
+        const double allowed = std::sqrt(c.speed * c.speed + 2.0 * p.comfortDecel * d);
         if (allowed < plan.targetSpeed) {
             plan.targetSpeed = allowed;
             plan.limitingDistance = d;

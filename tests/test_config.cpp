@@ -50,7 +50,7 @@ TEST_CASE("default config text round-trips to default values without warnings") 
     CHECK(r.config.safety.steeringOverrideThreshold == Approx(d.safety.steeringOverrideThreshold));
     CHECK(r.config.safety.maxCrossTrack == Approx(d.safety.maxCrossTrack));
     CHECK(r.config.planner.maxLateralAccel == Approx(d.planner.maxLateralAccel));
-    CHECK(r.config.controls.toggleAutopilot == d.controls.toggleAutopilot);
+    CHECK(r.config.controls.toggle == d.controls.toggle);
     CHECK(r.config.map.laneWidth == Approx(d.map.laneWidth));
     CHECK(r.config.debug.recordTelemetry == d.debug.recordTelemetry);
 }

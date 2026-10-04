@@ -59,6 +59,7 @@ struct PlannedPath {
     double nextManeuverDistance = 0.0;
     bool onRoute = false;          // path follows the navigation route
     double routeRemaining = 0.0;   // m, when on route
+    std::vector<PathStop> stops;   // controlled junction lanes on the path (s on `path`)
 };
 
 // Builds the rolling driving path along the lane graph. With a route that

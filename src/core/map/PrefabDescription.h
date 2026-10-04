@@ -23,6 +23,8 @@ struct PrefabNavCurve {
     float length = 0.0f;
     std::vector<int> next;
     std::vector<int> prev;
+    std::int32_t semaphoreId = -1;    // >= 0: the curve starts at a traffic-light stop line
+    std::uint64_t trafficRule = 0;    // token of a traffic_rule unit, e.g. "stop", "give_way"
 };
 
 struct PrefabDescription {

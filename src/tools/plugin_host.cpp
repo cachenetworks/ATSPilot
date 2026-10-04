@@ -211,6 +211,24 @@ void sendJobConfig(const std::string& cityId, const std::string& companyId) {
     fireEvent(SCS_TELEMETRY_EVENT_configuration, &cfg);
 }
 
+// Applies one input event from the plugin's device to the analogue values and
+// this frame's button presses (indices follow the device's input list).
+void applyInputEvent(const scs_input_event_t& ev, float* analog, GameButtons& buttons) {
+    if (ev.input_index < 3) {
+        analog[ev.input_index] = ev.value_float.value;
+        return;
+    }
+    if (!ev.value_bool.value || ev.input_index >= g_inputNames.size()) return;
+    const std::string& n = g_inputNames[ev.input_index];
+    if (n == "cruiectrl") buttons.cruiseToggle = true;
+    else if (n == "cruiectrlinc") buttons.cruiseInc = true;
+    else if (n == "cruiectrldec") buttons.cruiseDec = true;
+    else if (n == "cruiectrlres") buttons.cruiseResume = true;
+    else if (n == "lblinker") buttons.leftBlinker = true;
+    else if (n == "rblinker") buttons.rightBlinker = true;
+    else if (n == "quickpark") buttons.quickPark = true;
+}
+
 std::string devNavigation(HMODULE dll) {
     using Fn = int (*)(char*, int);
     auto fn = reinterpret_cast<Fn>(GetProcAddress(dll, "atspilot_dev_navigation"));
@@ -413,15 +431,19 @@ int main(int argc, char** argv) {
             sendBool(SCS_TELEMETRY_TRUCK_CHANNEL_engine_enabled, true);
             sendBool(SCS_TELEMETRY_TRUCK_CHANNEL_electric_enabled, true);
             sendS32(SCS_TELEMETRY_TRUCK_CHANNEL_engine_gear, 8);
+            sendFloat(SCS_TELEMETRY_TRUCK_CHANNEL_cruise_control, static_cast<float>(truck.cruiseSet()));
+            sendBool(SCS_TELEMETRY_TRUCK_CHANNEL_lblinker, truck.blinkerLeft());
+            sendBool(SCS_TELEMETRY_TRUCK_CHANNEL_rblinker, truck.blinkerRight());
             sendS32(SCS_TELEMETRY_TRUCK_CHANNEL_displayed_gear, 8);
             fireEvent(SCS_TELEMETRY_EVENT_frame_end, nullptr);
 
             // Input phase of the next render frame.
+            GameButtons frameButtons;
             scs_u32_t flags = SCS_INPUT_EVENT_CALLBACK_FLAG_first_in_frame;
-            for (int guard = 0; guard < 16; ++guard) {
+            for (int guard = 0; guard < 32; ++guard) {
                 scs_input_event_t ev{};
                 if (g_device.input_event_callback(&ev, flags, g_device.callback_context) != SCS_RESULT_ok) break;
-                if (ev.input_index < 3) semValues[ev.input_index] = ev.value_float.value;
+                applyInputEvent(ev, semValues, frameButtons);
                 flags = 0;
             }
 
@@ -432,10 +454,11 @@ int main(int argc, char** argv) {
             cmd.steering = -semValues[0];
             cmd.throttle = semValues[1];
             cmd.brake = semValues[2];
+            cmd.buttons = frameButtons;
             truck.step(cmd, dt);
 
             if (!engaged && t > 1.0) {
-                devRequest(static_cast<int>(PilotRequest::ToggleAutopilot));
+                devRequest(static_cast<int>(PilotRequest::Toggle));
                 engaged = true;
             }
             const std::string st = devState(dll);
@@ -503,6 +526,10 @@ int main(int argc, char** argv) {
             const double dt = 1.0 / 60.0;
             const auto wallStart = std::chrono::steady_clock::now();
             bool engaged = false, sawNav = false;
+            double gpsDistance = routeLen;
+            int cruiseOnFrames = 0, blinkerFrames = 0, stopsReleased = 0, tapLeft = 0;
+            double waitSince = -1.0;
+            bool tapped = false;
             double driven = 0.0, minRemaining = 1e12;
             Vec2 last = truck.rearAxle();
             std::string endState, lastNav;
@@ -517,7 +544,10 @@ int main(int argc, char** argv) {
                 sendPlacement(s.worldPosition, s.headingUnit);
                 sendFloat(SCS_TELEMETRY_TRUCK_CHANNEL_speed, static_cast<float>(s.speed));
                 sendFloat(SCS_TELEMETRY_TRUCK_CHANNEL_input_steering, -navSem[0]);
-                sendFloat(SCS_TELEMETRY_TRUCK_CHANNEL_input_throttle, navSem[1]);
+                // A driver tapping the throttle to release a stop line.
+                const float driverThrottle = tapLeft > 0 ? 0.6f : 0.0f;
+                if (tapLeft > 0) --tapLeft;
+                sendFloat(SCS_TELEMETRY_TRUCK_CHANNEL_input_throttle, navSem[1] + driverThrottle);
                 sendFloat(SCS_TELEMETRY_TRUCK_CHANNEL_input_brake, navSem[2]);
                 sendFloat(SCS_TELEMETRY_TRUCK_CHANNEL_effective_steering, static_cast<float>(s.effectiveSteering));
                 for (scs_u32_t w = 0; w < 2; ++w) {
@@ -526,12 +556,28 @@ int main(int argc, char** argv) {
                 sendBool(SCS_TELEMETRY_TRUCK_CHANNEL_parking_brake, false);
                 sendBool(SCS_TELEMETRY_TRUCK_CHANNEL_engine_enabled, true);
                 sendS32(SCS_TELEMETRY_TRUCK_CHANNEL_engine_gear, 8);
+                sendFloat(SCS_TELEMETRY_TRUCK_CHANNEL_cruise_control, static_cast<float>(truck.cruiseSet()));
+                sendBool(SCS_TELEMETRY_TRUCK_CHANNEL_lblinker, truck.blinkerLeft());
+                sendBool(SCS_TELEMETRY_TRUCK_CHANNEL_rblinker, truck.blinkerRight());
+                // The game's GPS: shortest-route distance to the depot, refreshed twice a second.
+                if (std::fmod(t, 0.5) < dt) {
+                    const auto here = net->query(truck.rearAxle(), 15.0);
+                    for (const auto& m : here) {
+                        const Route g = planRoute(*net, m.segment, m.s, dest->lanes);
+                        if (g.found) {
+                            gpsDistance = g.length;
+                            break;
+                        }
+                    }
+                }
+                sendFloat(SCS_TELEMETRY_TRUCK_CHANNEL_navigation_distance, static_cast<float>(gpsDistance));
                 fireEvent(SCS_TELEMETRY_EVENT_frame_end, nullptr);
+                GameButtons frameButtons;
                 scs_u32_t flags = SCS_INPUT_EVENT_CALLBACK_FLAG_first_in_frame;
-                for (int guard = 0; guard < 16; ++guard) {
+                for (int guard = 0; guard < 32; ++guard) {
                     scs_input_event_t ev{};
                     if (g_device.input_event_callback(&ev, flags, g_device.callback_context) != SCS_RESULT_ok) break;
-                    if (ev.input_index < 3) navSem[ev.input_index] = ev.value_float.value;
+                    applyInputEvent(ev, navSem, frameButtons);
                     flags = 0;
                 }
                 ControlCommand cmd;
@@ -539,12 +585,15 @@ int main(int argc, char** argv) {
                 cmd.steering = -navSem[0];
                 cmd.throttle = navSem[1];
                 cmd.brake = navSem[2];
+                cmd.buttons = frameButtons;
                 truck.step(cmd, dt);
                 driven += atspilot::distance(last, truck.rearAxle());
+                cruiseOnFrames += truck.cruiseSet() > 0.0 ? 1 : 0;
+                blinkerFrames += truck.blinkerLeft() || truck.blinkerRight() ? 1 : 0;
                 last = truck.rearAxle();
 
                 if (!engaged && t > 2.0) {
-                    devRequest(static_cast<int>(PilotRequest::ToggleAutopilot));
+                    devRequest(static_cast<int>(PilotRequest::Toggle));
                     engaged = true;
                 }
                 const std::string nav = devNavigation(dll);
@@ -554,6 +603,17 @@ int main(int argc, char** argv) {
                 }
                 if (nav != lastNav && static_cast<int>(t) % 20 == 0) lastNav = nav;
                 const std::string st = devState(dll);
+                if (st.find("|Waiting at") != std::string::npos) {
+                    if (waitSince < 0.0) waitSince = t;
+                    if (!tapped && t - waitSince > 1.0) {
+                        tapLeft = 18;
+                        tapped = true;
+                        ++stopsReleased;
+                    }
+                } else {
+                    waitSince = -1.0;
+                    tapped = false;
+                }
                 if (engaged && t > 2.5 && st.rfind("AUTOPILOT", 0) != 0) {
                     endState = st;
                     break;
@@ -563,9 +623,12 @@ int main(int argc, char** argv) {
             std::printf("navigation scenario: drove %.0f m, navigation %s, closest remaining %.0f m, last nav '%s' -> %s\n",
                         driven, sawNav ? "active" : "never active", minRemaining, devNavigation(dll).c_str(),
                         endState.c_str());
+            std::printf("navigation scenario: game cruise control on for %.0f s, blinkers on for %.0f s, %d stop lines "
+                        "released with a throttle tap, quick-park presses %d\n",
+                        cruiseOnFrames * dt, blinkerFrames * dt, stopsReleased, truck.quickParkPresses());
             // Success: navigation engaged and the truck either arrived (stopped at the end
             // of the route) or was still driving the route when time ran out.
-            navResult = sawNav && (minRemaining < 300.0 || endState.rfind("AUTOPILOT", 0) == 0) ? 0 : 1;
+            navResult = sawNav && endState.find("Destination Reached") != std::string::npos ? 0 : 1;
             devRequest(static_cast<int>(PilotRequest::Cancel));
         }
     }

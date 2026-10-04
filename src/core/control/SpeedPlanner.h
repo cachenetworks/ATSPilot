@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 #include "path/Path.h"
 
 namespace atspilot {
@@ -34,9 +36,15 @@ struct SpeedPlan {
     double minRadiusAhead = 0.0;     // tightest radius within the horizon
 };
 
+// A speed that must not be exceeded from arc length `s` on (0 = stop there).
+struct SpeedConstraint {
+    double s = 0.0;
+    double speed = 0.0;
+};
+
 // Computes the highest speed that still allows decelerating at `comfortDecel`
-// to every curve speed and the path end within the horizon.
+// to every curve speed, every extra constraint and the path end within the horizon.
 SpeedPlan planSpeed(const SpeedPlannerParams& p, const VehicleLoadFactors& f, const Path& path, double currentS,
-                    double cruiseSpeed);
+                    double cruiseSpeed, const std::vector<SpeedConstraint>& constraints = {});
 
 }  // namespace atspilot

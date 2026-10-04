@@ -84,6 +84,7 @@ Runtime::~Runtime() {
         }
         workerCv_.notify_all();
         if (worker_.joinable()) worker_.join();
+        hud_.reset();
         if (map_) map_->stop();
         recorder_.stop();
         log_.stop();
@@ -110,23 +111,13 @@ void Runtime::loadConfiguration() {
     for (const auto& w : r.warnings) log_.warn("Config: {}", w);
 
     hotkeys_.clear();
-    const std::pair<const std::string*, PilotRequest> bindings[] = {
-        {&config_.controls.toggleAutopilot, PilotRequest::ToggleAutopilot},
-        {&config_.controls.toggleLaneAssist, PilotRequest::ToggleLaneAssist},
-        {&config_.controls.toggleCruise, PilotRequest::ToggleCruise},
-        {&config_.controls.speedUp, PilotRequest::SpeedUp},
-        {&config_.controls.speedDown, PilotRequest::SpeedDown},
-        {&config_.controls.resume, PilotRequest::Resume},
-        {&config_.controls.cancel, PilotRequest::Cancel},
-        {&config_.controls.emergencyDisable, PilotRequest::EmergencyDisable},
-    };
-    for (const auto& [text, req] : bindings) {
-        if (const auto k = parseKeyBinding(*text)) {
-            hotkeys_.push_back({*k, req, false});
-            log_.info("Control {} = {}", toString(req), toString(*k));
-        } else {
-            log_.warn("Config: cannot parse key binding '{}' for {}", *text, toString(req));
-        }
+    // ATSPilot has a single key; speed is set with the game's own cruise control keys.
+    if (const auto k = parseKeyBinding(config_.controls.toggle)) {
+        hotkeys_.push_back({*k, PilotRequest::Toggle, false});
+        log_.info("ATSPilot on/off key: {}", toString(*k));
+    } else {
+        log_.warn("Config: cannot parse key binding '{}'; using F9", config_.controls.toggle);
+        hotkeys_.push_back({*parseKeyBinding("F9"), PilotRequest::Toggle, false});
     }
 }
 
@@ -166,7 +157,7 @@ void Runtime::initialise() {
     lo2.maxFiles = config_.debug.logFiles;
     log_.start(lo2);
 
-    log_.info("ATSPilot {} plugin initialized (data: {})", "0.1.0", paths_.dataDir.string());
+    log_.info("ATSPilot {} plugin initialized (data: {})", "0.2.0", paths_.dataDir.string());
 
     // <game>/bin/win_x64/plugins/atspilot.dll -> <game>
     paths_.gameDir = config_.map.gameDir.empty() ? thisModuleDir().parent_path().parent_path().parent_path()
@@ -194,6 +185,8 @@ void Runtime::initialise() {
             log_.info("Recording telemetry to {}", file.string());
         }
     }
+
+    if (config_.hud.enabled) hud_ = std::make_unique<Hud>(config_.hud, config_.speed.units);
 
     worker_ = std::thread([this] { workerLoop(); });
 }
@@ -315,6 +308,9 @@ void Runtime::onFrameEnd() {
         const PathSnapshotPtr path = map_ ? map_->latestPath(&pathWall) : nullptr;
         command_ = pilot_->update(current_, vehicleConfig_, path, now, lastTelemetryWall_, pathWall);
         commandWall_ = now;
+        // Game-control presses are queued until the input device sends them, since
+        // several physics frames can pass between two input callbacks.
+        pendingButtons_.merge(command_.buttons);
         recorder_.record(current_, command_, pilot_->debug(), pilot_->mode());
         publishStatus();
         flushGameLog();
@@ -323,6 +319,12 @@ void Runtime::onFrameEnd() {
     } catch (...) {
         fail("frame", "unknown error");
     }
+}
+
+GameButtons Runtime::takeButtons() {
+    GameButtons b = pendingButtons_;
+    pendingButtons_ = GameButtons{};
+    return b;
 }
 
 OutputValues Runtime::currentOutput() {
@@ -363,6 +365,8 @@ void Runtime::handleEvent(PilotEvent e, const std::string& msg) {
         case PilotEvent::Unavailable: alias = "SystemHand"; break;
         case PilotEvent::EmergencyBraking: alias = "SystemHand"; break;
         case PilotEvent::SetSpeedChanged: break;
+        case PilotEvent::WaitingAtIntersection: alias = "SystemNotification"; break;
+        case PilotEvent::Arrived: alias = "SystemAsterisk"; break;
     }
     (void)msg;
     if (!alias) return;
@@ -384,6 +388,7 @@ void Runtime::publishStatus() {
             st.statusMessage = "Loading map: " + map_->statusText();
         }
     }
+    if (hud_) hud_->update(st);
     {
         std::lock_guard lock(workerMutex_);
         statusSnapshot_ = st;
@@ -417,7 +422,12 @@ void Runtime::workerLoop() {
             j << "{\"mode\":\"" << toString(st.mode) << "\",\"available\":" << (st.available ? "true" : "false")
               << ",\"telemetry\":" << (st.telemetryConnected ? "true" : "false")
               << ",\"map\":" << (st.mapLoaded ? "true" : "false")
-              << ",\"navigation\":" << (st.navigationActive ? "true" : "false") << ",\"units\":\"" << unitLabel(units)
+              << ",\"navigation\":" << (st.navigationActive ? "true" : "false")
+              << ",\"gps_matched\":" << (st.gpsMatched ? "true" : "false")
+              << ",\"game_cruise\":" << (st.gameCruiseActive ? "true" : "false")
+              << ",\"cruise_set_speed\":" << std::lround(mpsToSpeed(st.cruiseSetSpeed, units))
+              << ",\"waiting_at_intersection\":" << (st.waitingAtIntersection ? "true" : "false")
+              << ",\"profile\":\"" << jsonEscape(st.profile) << "\"" << ",\"units\":\"" << unitLabel(units)
               << "\",\"speed\":" << std::lround(mpsToSpeed(st.speed, units))
               << ",\"set_speed\":" << std::lround(mpsToSpeed(st.setSpeed, units))
               << ",\"target_speed\":" << std::lround(mpsToSpeed(st.targetSpeed, units))

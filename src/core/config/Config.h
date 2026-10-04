@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "control/GameCruise.h"
 #include "control/Lateral.h"
 #include "control/Longitudinal.h"
 #include "control/SpeedPlanner.h"
@@ -14,10 +15,9 @@ enum class SpeedUnits { Mph, Kph };
 
 struct SpeedConfig {
     SpeedUnits units = SpeedUnits::Mph;
-    double maxSpeed = 65.0;        // in `units`
+    double maxSpeed = 65.0;        // in `units`; used until the player sets the game's cruise speed
     double limitOffset = 0.0;      // added to the posted limit, in `units`
     bool followSpeedLimit = true;
-    double step = 5.0;             // set-speed change per key press, in `units`
 };
 
 struct SteeringConfig {
@@ -43,15 +43,31 @@ struct SafetyConfig {
     double maxHeadingErrorDeg = 35.0;
 };
 
+// ATSPilot has exactly one control: on/off. Speed is adjusted with the game's
+// own cruise control keys, and braking or steering takes over at any time.
 struct ControlsConfig {
-    std::string toggleAutopilot = "F9";
-    std::string toggleLaneAssist = "F8";
-    std::string toggleCruise = "Insert";
-    std::string speedUp = "Equals";
-    std::string speedDown = "Minus";
-    std::string resume = "Shift+F9";
-    std::string cancel = "Delete";
-    std::string emergencyDisable = "Shift+Delete";
+    std::string toggle = "F9";
+};
+
+// Use of the game's built-in driving systems.
+struct IngameConfig {
+    // Hold speed with the game's cruise control, so the game's adaptive cruise
+    // control and emergency brake assist (on trucks that have them) handle traffic.
+    bool useCruiseControl = true;
+    GameCruiseParams cruise;
+    // Operate the turn signals for lane changes, exits and turns.
+    bool useBlinkers = true;
+    double blinkerDistance = 150.0;  // m before the manoeuvre
+    // Ask the game to park the trailer once the depot entrance is reached.
+    bool quickPark = true;
+};
+
+struct IntersectionConfig {
+    bool stopAtSignals = true;      // traffic-light controlled junction lanes (state is unknown to ATSPilot)
+    bool stopAtStopSigns = true;
+    double yieldSpeed = 4.0;        // m/s through give-way and railway-crossing lanes
+    double goTapMaxSeconds = 1.5;   // a throttle tap shorter than this while waiting means "go"
+    double stopLineMargin = 1.5;    // m between the truck's front and the stop line
 };
 
 struct MapConfig {
@@ -67,6 +83,21 @@ struct RouteConfig {
     bool enabled = true;
     double laneChangeCost = 60.0;  // m of driving a lane change is worth when routing
     double recalcAfter = 1.0;      // s off the route before recalculating
+    // Keep the route consistent with the in-game GPS by comparing its remaining
+    // distance with the game's navigation distance (see docs/map-parsing.md).
+    bool matchGameGps = true;
+    double gpsTolerance = 0.04;    // relative distance mismatch tolerated
+};
+
+enum class DrivingProfile { Auto, Comfort, Normal, Assertive, HeavyHaul };
+
+const char* toString(DrivingProfile p);
+
+struct HudConfig {
+    bool enabled = true;
+    std::string corner = "top_right";  // top_left, top_right, bottom_left, bottom_right
+    double scale = 1.0;
+    double opacity = 0.85;
 };
 
 struct DebugConfig {
@@ -87,11 +118,15 @@ struct Config {
     LongitudinalParams cruise;
     SpeedPlannerParams planner;
     double aggressiveness = 1.0;
+    DrivingProfile profile = DrivingProfile::Auto;
     SafetyConfig safety;
     ControlsConfig controls;
+    IngameConfig ingame;
+    IntersectionConfig intersections;
     MapConfig map;
     RouteConfig route;
     bool audioEnabled = true;
+    HudConfig hud;
     DebugConfig debug;
 };
 
@@ -106,6 +141,11 @@ ConfigLoadResult loadConfig(const std::string& text);
 
 // The documented default configuration file, written when none exists.
 std::string defaultConfigText();
+
+// A driving profile scales the tuning on top of the configured values.
+// `Auto` picks HeavyHaul for loads above 25 t and Normal otherwise.
+DrivingProfile resolveProfile(DrivingProfile p, double cargoMassKg);
+Config applyProfile(const Config& base, DrivingProfile resolved);
 
 double speedToMps(double value, SpeedUnits units);
 double mpsToSpeed(double mps, SpeedUnits units);

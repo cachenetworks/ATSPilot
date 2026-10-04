@@ -2,8 +2,9 @@
 
 ## Modes
 
-`OFF`, `CRUISE` (pedals), `LANE ASSIST` (steering), `AUTOPILOT` (both) and
-`EMERGENCY STOP`. Engagement validates the following, and on failure reports
+`OFF`, `AUTOPILOT` and `EMERGENCY STOP`, switched with a single key. ATSPilot
+has no separate cruise or lane-assist modes: the game's own cruise control and
+lane assist are used directly (see "Speed via the game's cruise control"). Engagement validates the following, and on failure reports
 the reason instead of engaging:
 
 - telemetry valid and not paused
@@ -19,7 +20,10 @@ Positions are taken at the **rear axle** (Pure Pursuit) or the **steer axle**
 configuration event.
 
 - **Lookahead:** `Ld = clamp(base + v·factor, min, max)`, with defaults
-  15 m + 0.5 s·v within [8, 60] m.
+  15 m + 0.5 s·v within [4, 60] m. It is then limited to `0.35 × R_min`,
+  where `R_min` is the tightest radius within the lookahead. On a 20 m
+  city turn this cuts the corner error from 1.53 m to 0.38 m in the simulator.
+  Highway curves (R ≥ 60 m) are unaffected.
 - **Pure Pursuit:** `δ = atan(2·L·sin α / Ld)`, where α is the angle to the path
   point `Ld` ahead of the projection.
 - **Stanley:** `δ = ψ_e + atan2(−k·e, v + v_s)`.
@@ -106,3 +110,63 @@ Simulator results with the defaults (kinematic model, 150 ms steering lag):
 A shorter lookahead (6 m + 0.8·v) halves corner cutting in tight urban turns
 but adds steering dither at low speed. The conservative default favours highway
 smoothness.
+
+## Speed via the game's cruise control
+
+`GameCruiseManager` drives the game's cruise control through the input
+device's `cruiectrl`, `cruiectrlinc` and `cruiectrldec` controls. It reads the
+result back from `truck.cruise_control`:
+
+- Below the game's cruise minimum (starting guess 8.5 m/s, learned upwards
+  when a toggle press is refused), ATSPilot drives its own pedals.
+- Above it, it presses the toggle once and then nudges the set speed towards
+  the planned target. Presses are at least 0.25 s apart. While cruise control
+  is on, ATSPilot sends no throttle or brake.
+- A set-speed change that ATSPilot did not cause is the player's: it becomes
+  the maximum speed.
+- When the plan needs more than 1.5 m/s of extra braking (sharp curves, stop
+  lines), ATSPilot brakes itself, which cancels the cruise control as it would
+  for a driver. Cruise control is switched back on afterwards.
+- If the cruise control switches off without ATSPilot causing it, the
+  autopilot disengages and asks the driver to take over. Causes include driver
+  input, emergency brake assist, or adaptive cruise dropping out at low speed.
+
+This puts speed in traffic under the game's adaptive cruise control and
+emergency brake assist, on trucks that have them.
+
+## Junctions
+
+The planner publishes the controlled junction lanes on the path (`PathStop`):
+traffic light (semaphore id), stop sign, give way, railway crossing.
+
+- **Traffic lights and stop signs:** a speed constraint of 0 at the stop line,
+  which is the lane start minus the truck's front overhang and a 1.5 m margin.
+  Once the truck is stopped there, ATSPilot holds the brake and waits. A
+  throttle tap shorter than 1.5 s releases that stop. Holding the throttle
+  longer is a takeover.
+- **Give way and railway crossings:** a 4 m/s constraint.
+
+Released stops are remembered by lane id so they do not trigger again.
+
+## Blinkers and arrival
+
+Within 150 m of a "Keep", "Turn" or "Change Lane" manoeuvre, ATSPilot sets the
+matching blinker. It reads `truck.lblinker` and `truck.rblinker` and toggles to
+match. It only cancels blinkers it switched on.
+
+At a route's end (< 40 m remaining, stopped), it presses the game's
+`quickpark` and disengages with "Destination Reached".
+
+## Profiles
+
+`applyProfile` multiplies curve lateral acceleration, comfort deceleration and
+steering rate:
+
+| Profile | Multiplier | Speed cap |
+|---|---|---|
+| comfort | 0.8 | none |
+| normal | 1.0 | none |
+| assertive | 1.2–1.25 | none |
+| heavy_haul | 0.7 | 55 mph |
+
+`auto` chooses heavy_haul above 25 t of cargo.
