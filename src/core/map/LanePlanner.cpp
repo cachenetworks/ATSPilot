@@ -384,6 +384,17 @@ PlannedPath buildPlannedPath(const RoadNetwork& net, const LaneMatch& start, con
                                                  : StopKind::RailCrossing;
             out.stops.push_back(stop);
         }
+        if (route) {
+            // Service stops on the route: where along this lane the pump or scale is.
+            for (const auto& svc : route->services) {
+                if (svc.lane != out.chain[c]) continue;
+                PathStop stop;
+                stop.s = arcLength() + svc.s;
+                stop.segment = out.chain[c];
+                stop.kind = svc.kind == ServiceKind::Fuel ? StopKind::Fuel : StopKind::Weigh;
+                out.stops.push_back(stop);
+            }
+        }
         if (!pts.empty()) {
             // The gap between this lane's start and the previous lane's end, which is
             // what a merge, lane drop or imperfect join leaves behind.

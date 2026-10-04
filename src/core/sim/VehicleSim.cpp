@@ -36,6 +36,10 @@ void VehicleSim::step(const ControlCommand& cmd, double dt) {
     if (b.rightBlinker) blinkerRight_ = !blinkerRight_, blinkerLeft_ = false;
     if (b.quickPark) ++quickParks_;
     indicatorHeld_ = cmd.active ? cmd.indicator : 0;
+    if (cmd.active && cmd.activate) {
+        activateHeld_ += dt;
+        if (std::abs(v_) < 0.5 && fuelCapacity_ > 0.0) fuel_ = std::min(fuelCapacity_, fuel_ + refuelRate_ * dt);
+    }
     if (brake > 0.05) cruiseSet_ = 0.0;
     if (cruiseSet_ > 0.0) {
         const double err = std::min(cruiseSet_, cruiseCap_) - v_;
@@ -81,6 +85,7 @@ VehicleState VehicleSim::state() const {
     s.steerableWheelAngle = wheel_;
     s.cruiseControlSpeed = cruiseSet_;
     s.navigationSpeedLimit = speedLimit_;
+    s.fuel = fuel_;
     s.blinkerLeft = blinkerLeft_ || indicatorHeld_ > 0;
     s.blinkerRight = blinkerRight_ || indicatorHeld_ < 0;
     s.gear = v_ > 0.1 ? 6 : 1;
@@ -98,6 +103,7 @@ VehicleConfig VehicleSim::config() const {
     c.frontAxleZ = p_.frontAxleZ;
     c.rearAxleZ = p_.rearAxleZ;
     c.trailerCount = p_.trailerCount;
+    c.fuelCapacity = fuelCapacity_;
     return c;
 }
 

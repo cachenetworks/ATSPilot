@@ -27,16 +27,29 @@ struct PrefabNavCurve {
     std::uint64_t trafficRule = 0;    // token of a traffic_rule unit, e.g. "stop", "give_way"
 };
 
+// Spawn point types used by ATSPilot (the ppd's spawn point type field).
+namespace SpawnType {
+inline constexpr std::uint32_t Gas = 3;            // a fuel pump stand
+inline constexpr std::uint32_t WeighStation = 6;   // the scale of a weigh station
+}  // namespace SpawnType
+
+struct PrefabSpawnPoint {
+    Vec3 position;  // prefab-local
+    Quat rotation;
+    std::uint32_t type = 0;
+};
+
 struct PrefabDescription {
     std::uint32_t version = 0;
     std::vector<PrefabNodeDesc> nodes;
     std::vector<PrefabNavCurve> curves;
+    std::vector<PrefabSpawnPoint> spawnPoints;
 };
 
 inline constexpr std::uint32_t kSupportedPpdVersion = 25;
 
 // Parses the parts of a compiled prefab descriptor (.ppd) needed for driving:
-// nodes and AI navigation curves. Throws ParseError on malformed data.
+// nodes, AI navigation curves and spawn points. Throws ParseError on malformed data.
 PrefabDescription parsePrefabDescription(const char* data, std::size_t size);
 
 }  // namespace atspilot

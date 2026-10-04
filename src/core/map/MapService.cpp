@@ -3,6 +3,7 @@
 #include <chrono>
 
 #include "map/MapBuilder.h"
+#include "map/ServicePlanner.h"
 #include "map/Token.h"
 #include "math/Coordinates.h"
 #include "math/MathUtil.h"
@@ -224,6 +225,12 @@ void MapService::updateRoute(const VehicleState& s, const VehicleConfig& vc, con
         }
     }
 
+    if (updateServices(s, vc, loc, cfg, wall)) {
+        route_.reset();
+        routeRetryWall_ = 0.0;
+        offRouteSince_ = -1.0;
+    }
+
     std::string key;
     if (cfg.route.enabled && vc.hasJob && !vc.destinationCompanyId.empty()) {
         key = vc.destinationCityId + "/" + vc.destinationCompanyId;
@@ -248,6 +255,21 @@ void MapService::updateRoute(const VehicleState& s, const VehicleConfig& vc, con
         if (r.found) {
             log_.info("Route calculated: {:.1f} km, {} lane segments ({} expanded){}", r.length / 1000.0,
                       r.steps.size(), r.expanded, r.gpsMatched ? ", matches the in-game GPS" : "");
+            const bool viaFuel = std::any_of(r.services.begin(), r.services.end(),
+                                             [](const RouteService& v) { return v.kind == ServiceKind::Fuel; });
+            if (needFuel_ && !viaFuel) {
+                // Pumps in open lots cannot be driven to along mapped lanes.
+                log_.warn("Fuel low, but no fuel station ATSPilot can drive into is near; refuel manually (will look "
+                          "again in 10 minutes)");
+                needFuel_ = false;
+                fuelDisabledUntil_ = wall + 600.0;
+            }
+            for (const auto& svc : r.services) {
+                const Vec2 at = net_->segment(svc.lane).points.front().plan();
+                log_.info("Route stops at a {} (lane {}, {:.0f} m from here)",
+                          svc.kind == ServiceKind::Fuel ? "fuel station" : "weigh station", svc.lane,
+                          distance(at, net_->segment(loc.match.segment).points.front().plan()));
+            }
             route_ = std::make_shared<const Route>(std::move(r));
             offRouteSince_ = -1.0;
         } else {
@@ -255,7 +277,7 @@ void MapService::updateRoute(const VehicleState& s, const VehicleConfig& vc, con
             routeRetryWall_ = wall + 30.0;
         }
     }
-    if (key.empty()) return;
+    if (key.empty() && !needFuel_) return;
 
     // Off-route detection: the truck's lane is neither on the route nor beside it.
     if (route_) {
@@ -281,10 +303,11 @@ void MapService::updateRoute(const VehicleState& s, const VehicleConfig& vc, con
         if (key.rfind("gps:", 0) == 0) {
             for (const auto& m : net_->query(gameRoute_->points().back(), 40.0)) gpsGoals.push_back(m.segment);
         }
-        const Destination* dest = gpsGoals.empty() ? net_->findDestination(tokenFromString(vc.destinationCityId),
-                                                                           tokenFromString(vc.destinationCompanyId))
-                                                   : nullptr;
-        if (!dest && gpsGoals.empty()) {
+        const Destination* dest = gpsGoals.empty() && !key.empty()
+                                      ? net_->findDestination(tokenFromString(vc.destinationCityId),
+                                                              tokenFromString(vc.destinationCompanyId))
+                                      : nullptr;
+        if (!dest && gpsGoals.empty() && !needFuel_) {
             if (!destinationMissingLogged_) {
                 log_.warn("Destination {} not found in the map data; following the road instead", key);
                 destinationMissingLogged_ = true;
@@ -305,11 +328,60 @@ void MapService::updateRoute(const VehicleState& s, const VehicleConfig& vc, con
                                   ? s.navigationDistance / gpsScale_
                                   : 0.0;
         const double tolerance = cfg.route.gpsTolerance;
-        routeFuture_ = std::async(std::launch::async, [net, startSeg, startS, goals, opts, target, tolerance] {
-            return target > 0.0 ? planRouteMatching(*net, startSeg, startS, goals, target, tolerance, opts)
-                                : planRoute(*net, startSeg, startS, goals, opts);
+        ServicePlanOptions sp;
+        sp.fuel = needFuel_;
+        sp.weigh = cfg.services.weighStations;
+        for (const auto& [lane, when] : visitedServices_) sp.skipLanes.push_back(lane);
+        routeFuture_ = std::async(std::launch::async, [net, startSeg, startS, goals, opts, target, tolerance, sp] {
+            return planRouteWithServices(*net, startSeg, startS, goals, opts, target, tolerance, sp);
         });
     }
+}
+
+bool MapService::updateServices(const VehicleState& s, const VehicleConfig& vc, const LocalizationResult& loc,
+                                const Config& cfg, double wall) {
+    bool replan = false;
+    // Fuel: low below the configured fraction (or the dashboard warning), and
+    // satisfied again once the tank is nearly full.
+    if (vc.fuelCapacity > 1.0 && s.fuel >= 0.0) {
+        const double frac = s.fuel / vc.fuelCapacity;
+        if (!needFuel_ && cfg.services.refuel && wall >= fuelDisabledUntil_ &&
+            (frac < cfg.services.refuelBelow || s.fuelWarning)) {
+            needFuel_ = true;
+            replan = true;
+            log_.info("Fuel low ({:.0f}%): routing to a fuel station", frac * 100.0);
+        } else if (needFuel_ && (frac > 0.9 || !cfg.services.refuel)) {
+            needFuel_ = false;
+            failedPumps_ = 0;
+            replan = true;
+            log_.info("Fuel {:.0f}%: continuing to the destination", frac * 100.0);
+        }
+    }
+    visitedServices_.erase(std::remove_if(visitedServices_.begin(), visitedServices_.end(),
+                                          [&](const auto& v) { return wall - v.second > 900.0; }),
+                           visitedServices_.end());
+    // A service stop the truck has driven past is done (or, for fuel that is
+    // still low, failed: another pump is tried, and after two the search stops).
+    if (route_ && !route_->services.empty()) {
+        const int here = route_->find(loc.match.segment);
+        for (const auto& svc : route_->services) {
+            const int at = route_->find(svc.lane);
+            const bool passed = here >= 0 && at >= 0 &&
+                                (here > at || (here == at && loc.match.s > svc.s + 40.0));
+            if (!passed) continue;
+            visitedServices_.push_back({svc.lane, wall});
+            replan = true;
+            if (svc.kind == ServiceKind::Fuel && needFuel_) {
+                log_.warn("Left the fuel station without refuelling");
+                if (++failedPumps_ >= 2) {
+                    needFuel_ = false;
+                    fuelDisabledUntil_ = wall + 1800.0;
+                    log_.warn("Refuelling did not work at two stations; not routing to fuel for 30 minutes");
+                }
+            }
+        }
+    }
+    return replan;
 }
 
 void MapService::setGameRoute(std::vector<std::uint64_t> nodeUids) {
@@ -385,7 +457,9 @@ void MapService::planOnce() {
     snap->nextManeuver = planned.nextManeuver;
     snap->nextManeuverDistance = planned.nextManeuverDistance;
     snap->generation = generation_;
-    snap->navigationActive = planned.onRoute;
+    // A route that only leads to a fuel pump (no destination) is not navigation:
+    // its end is no arrival.
+    snap->navigationActive = planned.onRoute && !destinationKey_.empty();
     snap->stops = planned.stops;
     snap->indications = planned.indications;
     snap->gpsMatched = planned.onRoute && gpsMatched_;

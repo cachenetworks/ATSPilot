@@ -150,6 +150,7 @@ ConfigLoadResult loadConfig(const std::string& text) {
         {"intersections", "yield_speed_mps", &c.intersections.yieldSpeed, 1.0, 15.0},
         {"intersections", "go_tap_max_s", &c.intersections.goTapMaxSeconds, 0.2, 5.0},
         {"intersections", "stop_line_margin_m", &c.intersections.stopLineMargin, 0.0, 10.0},
+        {"services", "refuel_below", &c.services.refuelBelow, 0.05, 0.8},
         {"traffic", "time_gap_s", &c.traffic.timeGap, 0.8, 5.0},
         {"traffic", "standstill_gap_m", &c.traffic.standstillGap, 2.0, 20.0},
         {"traffic", "corridor_half_width_m", &c.traffic.corridorHalfWidth, 1.0, 3.0},
@@ -174,6 +175,9 @@ ConfigLoadResult loadConfig(const std::string& text) {
         {"ingame", "quick_park", &c.ingame.quickPark},
         {"intersections", "stop_at_signals", &c.intersections.stopAtSignals},
         {"intersections", "stop_at_stop_signs", &c.intersections.stopAtStopSigns},
+        {"intersections", "right_on_red", &c.intersections.rightOnRed},
+        {"services", "refuel", &c.services.refuel},
+        {"services", "weigh_stations", &c.services.weighStations},
         {"memory", "enabled", &c.memory.enabled},
         {"memory", "steering", &c.memory.steering},
         {"memory", "traffic", &c.memory.traffic},
@@ -326,6 +330,12 @@ stop_at_stop_signs = true
 yield_speed_mps = 4.0       # through give-way and railway-crossing lanes
 go_tap_max_s = 1.5          # a throttle tap shorter than this while waiting means "go"
 stop_line_margin_m = 1.5
+right_on_red = true         # turn right on red after a full stop, when no traffic is coming
+
+[services]
+refuel = true               # drive to a fuel station and refuel when the tank runs low
+refuel_below = 0.25         # fraction of the tank that counts as low
+weigh_stations = true       # pull into weigh stations on the route and stop on the scale
 
 [steering]
 controller = "pure_pursuit" # "pure_pursuit" or "stanley"

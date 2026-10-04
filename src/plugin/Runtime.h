@@ -41,6 +41,7 @@ struct OutputValues {
     float throttle = 0.0f;
     float brake = 0.0f;
     int indicator = 0;  // held turn signal: +1 left, -1 right
+    bool activate = false;
 };
 
 // Everything ATSPilot keeps alive inside the game process. Created by the first

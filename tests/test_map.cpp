@@ -264,6 +264,14 @@ TEST_CASE("road network spatial query, projection and cache round-trip") {
     CHECK(matches[0].s == Approx(50.0));
     CHECK(matches[1].segment == c);
 
+    ServicePoint pump;
+    pump.kind = ServiceKind::Fuel;
+    pump.position = {40.0, -5.0};
+    pump.lane = c;
+    pump.s = 40.0f;
+    pump.offset = 5.0f;
+    net.addService(pump);
+
     const auto file = std::filesystem::temp_directory_path() / "atspilot_test_net.cache";
     REQUIRE(net.save(file, "fp1"));
     CHECK_FALSE(RoadNetwork::load(file, "other").has_value());
@@ -271,6 +279,11 @@ TEST_CASE("road network spatial query, projection and cache round-trip") {
     REQUIRE(loaded);
     CHECK(loaded->size() == 2);
     CHECK(loaded->query({50, 1.0}, 10.0).size() == 2);
+    REQUIRE(loaded->services().size() == 1);
+    CHECK((loaded->services()[0].kind == ServiceKind::Fuel));
+    CHECK(loaded->services()[0].lane == c);
+    CHECK(loaded->services()[0].s == Approx(40.0));
+    CHECK(loaded->services()[0].position.y == Approx(-5.0));
 }
 
 TEST_CASE("localizer prefers the lane with matching heading and sticks to it") {

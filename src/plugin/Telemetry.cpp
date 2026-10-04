@@ -81,6 +81,7 @@ void registerChannels() {
         {SCS_TELEMETRY_TRUCK_CHANNEL_navigation_distance, &s.navigationDistance},
         {SCS_TELEMETRY_TRUCK_CHANNEL_navigation_time, &s.navigationTime},
         {SCS_TELEMETRY_TRUCK_CHANNEL_navigation_speed_limit, &s.navigationSpeedLimit},
+        {SCS_TELEMETRY_TRUCK_CHANNEL_fuel, &s.fuel},
     };
     auto& log = Runtime::instance()->log();
     for (const auto& c : floats) {
@@ -96,6 +97,7 @@ void registerChannels() {
         {SCS_TELEMETRY_TRUCK_CHANNEL_wipers, &s.wipers},
         {SCS_TELEMETRY_TRUCK_CHANNEL_lblinker, &s.blinkerLeft},
         {SCS_TELEMETRY_TRUCK_CHANNEL_rblinker, &s.blinkerRight},
+        {SCS_TELEMETRY_TRUCK_CHANNEL_fuel_warning, &s.fuelWarning},
     };
     for (const auto& [name, target] : bools) {
         if (g_registerChannel(name, SCS_U32_NIL, SCS_VALUE_TYPE_bool, SCS_TELEMETRY_CHANNEL_FLAG_none, onBool, target) !=
@@ -141,6 +143,9 @@ void handleTruckConfig(const scs_named_value_t* attrs) {
     }
     if (const auto* nm = findAttribute(attrs, SCS_TELEMETRY_CONFIG_ATTRIBUTE_name, SCS_U32_NIL)) {
         vc.truckName = nm->value.value_string.value ? nm->value.value_string.value : "";
+    }
+    if (const auto* fc = findAttribute(attrs, SCS_TELEMETRY_CONFIG_ATTRIBUTE_fuel_capacity, SCS_U32_NIL)) {
+        vc.fuelCapacity = fc->value.value_float.value;
     }
     const auto* countAttr = findAttribute(attrs, SCS_TELEMETRY_CONFIG_ATTRIBUTE_wheel_count, SCS_U32_NIL);
     const scs_u32_t wheels = countAttr ? countAttr->value.value_u32.value : 0;

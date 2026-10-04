@@ -47,6 +47,15 @@ public:
     double time() const { return t_; }
     double cruiseSet() const { return cruiseSet_; }
     void setSpeedLimit(double mps) { speedLimit_ = mps; }  // reported as the navigation speed limit
+    // Fuel: the tank fills at `rate` l/s while "activate" is held at a standstill
+    // (rate 0: a pump where refuelling does not work).
+    void setFuel(double litres, double capacity, double rate = 20.0) {
+        fuel_ = litres;
+        fuelCapacity_ = capacity;
+        refuelRate_ = rate;
+    }
+    double fuel() const { return fuel_; }
+    double activateHeldTime() const { return activateHeld_; }
     // Lead-vehicle style slowdown of the game's (adaptive) cruise control for tests:
     // while set, cruise holds at most this speed.
     void setCruiseCap(double v) { cruiseCap_ = v; }
@@ -72,6 +81,10 @@ private:
     bool blinkerRight_ = false;
     int indicatorHeld_ = 0;  // the game's hold-type signal controls
     double speedLimit_ = 0.0;
+    double fuel_ = -1.0;
+    double fuelCapacity_ = 0.0;
+    double refuelRate_ = 20.0;
+    double activateHeld_ = 0.0;
     int quickParks_ = 0;
 };
 

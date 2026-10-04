@@ -21,7 +21,9 @@ controlled with **one key**.
 | **Speed** | Switches on the game's cruise control and nudges its set speed with the game's +/- controls. It slows for curves, speed limits, traffic and stops. It drives at the posted speed limit (`speed.max` is a ceiling). Below cruise-control speed, and to brake, it uses its own pedals. |
 | **Traffic** | Sees the AI traffic around the truck. It follows the vehicle ahead at a 2 s gap and queues behind stopped vehicles. It waits for crossing traffic it would meet at a junction, and brakes hard if something cuts in. |
 | **Traffic lights** | Reads each light's state. It stops on red, stops for amber when there is room, and goes on green, with no input from you. A light it cannot read is treated as an all-way stop. |
-| **Junctions** | Stops fully at stop signs, then pulls away once crossing traffic has cleared. Slows through give-way lanes and railway crossings. It never routes through truck-prohibited lanes. |
+| **Junctions** | Stops fully at stop signs, then pulls away once crossing traffic has cleared. Slows through give-way lanes and railway crossings. Turns **right on red** after a full stop when nothing is coming along the road it joins. It never routes through truck-prohibited lanes. |
+| **Weigh stations** | Pulls into weigh stations beside its route, stops on the scale, and drives on once the station lets it (or after a short pause). |
+| **Fuel** | Below 25% fuel it routes via a fuel station it can drive through, stops at the pump, holds the game's **activate** control until the tank is full, then carries on. |
 | **Route** | Follows the **in-game GPS route** exactly, to a job's depot or to any destination you set on the GPS. It plans lane changes along the way. With no route it follows the road. |
 | **Blinkers** | Signals from the road geometry. For lane changes: from 40 m before the move until it is in the new lane. For turns: from 60 m before the junction. For exits and forks: from 150 m before. For merges from an on-ramp or a lane drop: toward the lane it joins. It cancels only blinkers it switched on itself. |
 | **Arrival** | Stops at the depot entrance, presses the game's **quick-park**, and switches off ("Destination Reached"). |
@@ -60,6 +62,13 @@ own steering.
   window, because the SDK has no UI extension, so exclusive fullscreen may hide
   it. `status.json` carries the same data.
 - `.zip` map mods are not read. Base game and installed DLC are.
+- **Refuelling only at drive-through stations.** Most ATS fuel stations are
+  open lots whose pumps no mapped lane reaches (about 190 of 4000 pumps are
+  reachable). When none is near, ATSPilot says so in the log and keeps driving;
+  refuel yourself. Whether holding "activate" refuels, and where exactly to
+  stop, is still to be confirmed in game.
+- **Weigh stations are always entered** when one is beside the route, open or
+  not: the open/closed state is not read.
 
 ## Supported ATS version
 
@@ -107,7 +116,8 @@ documented defaults on first start:
 - `[ingame]`: use game cruise control, blinkers, quick-park
 - `[memory]`: game-memory features (steering, traffic, lights, GPS route)
 - `[traffic]`: following gap, standstill gap, amber-light braking limit
-- `[intersections]`: stop at signals or stop signs, give-way speed, tap duration
+- `[intersections]`: stop at signals or stop signs, give-way speed, tap duration, right on red
+- `[services]`: refuelling (and below what fraction of the tank), weigh stations
 - `[steering]` / `[cruise]` / `[planner]`: tuning
 - `[safety]`
 - `[route]`: navigation, GPS matching, lane-change cost

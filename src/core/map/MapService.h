@@ -63,6 +63,9 @@ private:
     void updateRoute(const VehicleState& s, const VehicleConfig& vc, const LocalizationResult& loc, const Config& cfg,
                      double wall, double step);
     void checkGpsAgreement(const VehicleState& s, const PlannedPath& planned, const Config& cfg, double wall);
+    // Fuel need and services passed; true when the route must be replanned.
+    bool updateServices(const VehicleState& s, const VehicleConfig& vc, const LocalizationResult& loc,
+                        const Config& cfg, double wall);
 
     Logger& log_;
     mutable std::mutex cfgMutex_;
@@ -108,6 +111,12 @@ private:
     double offRouteSince_ = -1.0;
     bool destinationMissingLogged_ = false;
     std::shared_ptr<const GpsCorridor> gameRoute_;  // the in-game GPS route, when known
+
+    // Services (planner thread).
+    bool needFuel_ = false;
+    double fuelDisabledUntil_ = -1e9;   // after repeated failed refuelling attempts
+    int failedPumps_ = 0;
+    std::vector<std::pair<std::uint32_t, double>> visitedServices_;  // lane, wall time
 
     // In-game GPS agreement: the navigation distance is compared with the route.
     double gpsScale_ = 0.0;        // navigation distance units per metre driven (learned)

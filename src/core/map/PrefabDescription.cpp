@@ -23,14 +23,20 @@ PrefabDescription parsePrefabDescription(const char* data, std::size_t size) {
     }
     const std::uint32_t nodeCount = r.u32();
     const std::uint32_t curveCount = r.u32();
-    r.skip(9 * 4);  // signs, semaphores, spawn points, terrain points/variants, map points, triggers, intersections, nav nodes
+    r.skip(2 * 4);  // signs, semaphores
+    const std::uint32_t spawnCount = r.u32();
+    r.skip(6 * 4);  // terrain points/variants, map points, triggers, intersections, nav nodes
     const std::uint32_t nodeOffset = r.u32();
     const std::uint32_t curveOffset = r.u32();
+    r.skip(2 * 4);  // sign, semaphore offsets
+    const std::uint32_t spawnOffset = r.u32();
 
     constexpr std::size_t kNodeSize = 104;
     constexpr std::size_t kCurveSize = 132;
+    constexpr std::size_t kSpawnSize = 36;
     if (std::size_t{nodeOffset} + std::size_t{nodeCount} * kNodeSize > size ||
-        std::size_t{curveOffset} + std::size_t{curveCount} * kCurveSize > size) {
+        std::size_t{curveOffset} + std::size_t{curveCount} * kCurveSize > size ||
+        std::size_t{spawnOffset} + std::size_t{spawnCount} * kSpawnSize > size) {
         throw ParseError("ppd tables exceed file size");
     }
 
@@ -75,6 +81,15 @@ PrefabDescription parsePrefabDescription(const char* data, std::size_t size) {
         c.semaphoreId = r.i32();
         c.trafficRule = r.u64();
         r.skip(4);  // nav node index
+    }
+
+    r.seek(spawnOffset);
+    d.spawnPoints.resize(spawnCount);
+    for (auto& sp : d.spawnPoints) {
+        sp.position = r.vec3f();
+        sp.rotation = readQuat(r);
+        sp.type = r.u32();
+        r.skip(4);  // flags
     }
     return d;
 }

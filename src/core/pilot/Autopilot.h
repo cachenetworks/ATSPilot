@@ -79,6 +79,15 @@ private:
     void learnSteeringRatio(const VehicleState& s);
     void updateProfile(const VehicleConfig& vc);
     double cruiseTarget(const VehicleState& s);
+    // Where the truck's front stops relative to a service stop's point.
+    double serviceFrontOffset(const PathStop& stop, const VehicleConfig& vc) const;
+    // Handles one fuel or weigh stop: adds its stop constraint and runs the
+    // refuelling / weighing sequence once the truck stands there.
+    void serviceStop(const PathStop& stop, const VehicleState& s, const VehicleConfig& vc, const Path& path,
+                     double frontS, double toFront, std::vector<SpeedConstraint>& constraints);
+    // Right on red: whether the truck, at a red light where its lane turns right,
+    // may go now (after a full stop, with no traffic coming).
+    bool rightOnRed(const PathStop& stop, const VehicleState& s, const Path& path, double lineDistance);
     void setMessage(const std::string& msg);
     void emit(PilotEvent e, const std::string& msg);
     GameButtons blinkers(const VehicleState& s, const PathSnapshotPtr& path, double time);
@@ -102,6 +111,22 @@ private:
     bool cruiseIgnoredLogged_ = false;
     int crossingId_ = -1;        // crossing vehicle currently calling for strong braking
     double crossingSince_ = 0.0;
+
+    // Service stops (fuel pump, weigh station scale).
+    std::uint32_t serviceSegment_ = 0xFFFFFFFFu;
+    double serviceSince_ = -1.0;   // arrived and stopped at the spot
+    double serviceNudge_ = 0.0;    // m moved forward after a refuelling attempt did nothing
+    int fuelTries_ = 0;
+    double fuelBest_ = -1.0;
+    double fuelLastRise_ = -1.0;
+    bool refuelling_ = false;
+    bool activate_ = false;
+
+    // Right turn on red.
+    std::uint32_t rorSegment_ = 0xFFFFFFFFu;     // waiting at this red light to turn right
+    double rorSince_ = -1.0;
+    double rorClearSince_ = -1.0;
+    std::uint32_t rorCommitted_ = 0xFFFFFFFFu;   // turning right on red through this lane
     double lastUpdateWall_ = -1e9;  // wall time of the previous update (hitch detection)
     double hitchFrom_ = -1e9;
     double hitchUntil_ = -1e9;

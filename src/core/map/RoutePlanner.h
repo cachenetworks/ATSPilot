@@ -15,6 +15,13 @@ struct RouteStep {
     bool laneChange = false;  // reached by moving sideways from the previous step's lane
 };
 
+// A stop on the route for a service: a fuel pump or a weigh station scale.
+struct RouteService {
+    std::uint32_t lane = 0;
+    double s = 0.0;  // along the lane
+    ServiceKind kind = ServiceKind::Fuel;
+};
+
 struct Route {
     bool found = false;
     std::vector<RouteStep> steps;
@@ -22,6 +29,7 @@ struct Route {
     std::size_t expanded = 0;  // search effort, for diagnostics
     std::string failure;
     bool gpsMatched = false;   // total length agrees with the in-game navigation distance
+    std::vector<RouteService> services;  // fuel and weigh stops on the way, in route order
 
     // Index of `segment` in steps at or after `from`, or -1.
     int find(std::uint32_t segment, int from = 0) const;

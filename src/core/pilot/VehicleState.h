@@ -42,6 +42,9 @@ struct VehicleState {
     double navigationDistance = 0.0;   // m
     double navigationTime = 0.0;       // s
     double navigationSpeedLimit = 0.0; // m/s, 0 = none
+
+    double fuel = -1.0;            // litres in the tank, < 0 = not reported
+    bool fuelWarning = false;
 };
 
 // Semi-static truck properties from the "truck"/"trailer" configuration events.
@@ -54,6 +57,7 @@ struct VehicleConfig {
     double rearAxleZ = 3.0;      // vehicle-space z of the rear axle group centre
     int trailerCount = 0;
     double cargoMassKg = 0.0;
+    double fuelCapacity = 0.0;   // litres, 0 = unknown
     bool hasJob = false;
     std::string destinationCity;
     std::string destinationCityId;     // job "destination.city.id", e.g. "fresno"

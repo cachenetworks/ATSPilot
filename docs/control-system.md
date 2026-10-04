@@ -147,8 +147,41 @@ traffic light (semaphore id), stop sign, give way, railway crossing.
   throttle tap shorter than 1.5 s releases that stop. Holding the throttle
   longer is a takeover.
 - **Give way and railway crossings:** a 4 m/s constraint.
+- **Right on red:** at a red light whose lane turns 60-150 degrees right, the
+  truck stops fully at the line for 2 s. It then turns once the junction has
+  been clear for 1 s. Clear means nothing is moving in the junction, nothing is
+  coming along the road being joined within 8 s, and no oncoming vehicle near
+  the junction could be turning left into it. Once committed it carries on,
+  and the traffic checks still apply on the path. `intersections.right_on_red`
+  switches it off.
 
 Released stops are remembered by lane id so they do not trigger again.
+
+## Services: weigh stations and fuel
+
+The map builder reads prefab spawn points: type 3 is a fuel pump stand and type
+6 is a weigh-station scale. Each is matched to the prefab lane passing nearest
+it, and stored in the map cache (format 6). `planRouteWithServices`
+(`map/ServicePlanner.cpp`) then adds stops to the route.
+
+- **Weigh stations:** the first scale beside the route ahead counts if it is
+  within 150 m, faces the same way, and is at least 250 m on. The route then
+  goes truck → scale lane → destination, unless that adds more than 3 km.
+  Stations already passed are skipped for 15 minutes. At the scale the truck
+  stops with the rig on it, then leaves after 5 s if no light ahead is red
+  (45 s at most).
+- **Fuel:** below `services.refuel_below` (25%), or with the dashboard
+  warning, the route goes via the pump reachable along mapped lanes that is
+  nearest by driving (within 25 km), then on to the destination. At the pump
+  the truck stops with its front 3.5 m past it and holds the game's
+  `activate` control. If no fuel flows within 6 s it moves 4 m forward and
+  tries again, up to 3 times. It finishes when the tank is 98% full or the
+  level stops rising for 4 s. Leaving a pump still low counts as a failed
+  attempt; after two, fuel routing pauses for 30 minutes.
+
+The route's stops appear on the path as `PathStop`s of kind `Fuel` and `Weigh`
+at the stand's position along its lane. A route that only leads to a pump
+(free roam, no destination) is not navigation, so its end is no arrival.
 
 ## Blinkers and arrival
 

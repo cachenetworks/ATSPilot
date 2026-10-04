@@ -43,6 +43,8 @@ const char* toString(StopKind k) {
         case StopKind::StopSign: return "stop sign";
         case StopKind::Yield: return "give way";
         case StopKind::RailCrossing: return "railway crossing";
+        case StopKind::Fuel: return "fuel pump";
+        case StopKind::Weigh: return "weigh station";
     }
     return "?";
 }
@@ -226,6 +228,158 @@ void Autopilot::learnSteeringRatio(const VehicleState& s) {
     // catching up with a fast input change).
     if (ratio < degToRad(10.0) || ratio > degToRad(70.0)) return;
     maxWheelAngle_ += (ratio - maxWheelAngle_) * 0.01;
+}
+
+double Autopilot::serviceFrontOffset(const PathStop& stop, const VehicleConfig& vc) const {
+    // Fuel: the tank sits behind the cab, so the front stops a few metres past
+    // the pump. Weigh: the whole rig on the scale, centred roughly on its point.
+    if (stop.kind == StopKind::Fuel) return 3.5 + serviceNudge_;
+    return vc.trailerCount > 0 ? 9.0 : 4.0;
+}
+
+void Autopilot::serviceStop(const PathStop& stop, const VehicleState& s, const VehicleConfig& vc, const Path& path,
+                            double frontS, double toFront, std::vector<SpeedConstraint>& constraints) {
+    const double spot = stop.s + serviceFrontOffset(stop, vc);
+    constraints.push_back({spot - toFront, 0.0});
+    const bool atSpot = spot - frontS < 2.0 && std::abs(s.speed) < 0.3;
+    if (!atSpot) {
+        if (serviceSegment_ == stop.segment) serviceSince_ = -1.0;
+        return;
+    }
+    if (serviceSegment_ != stop.segment) {
+        serviceSegment_ = stop.segment;
+        serviceNudge_ = 0.0;
+        fuelTries_ = 0;
+    }
+    if (serviceSince_ < 0.0) {
+        serviceSince_ = s.time;
+        fuelBest_ = s.fuel;
+        fuelLastRise_ = -1.0;
+        refuelling_ = false;
+        if (log_) log_->info("Stopped at the {}", toString(stop.kind));
+        setMessage(stop.kind == StopKind::Fuel ? "Refuelling" : "Weigh station: on the scale");
+    }
+    const double waited = s.time - serviceSince_;
+
+    if (stop.kind == StopKind::Weigh) {
+        // Weighing is automatic once stopped on the scale; the station's light
+        // shows when to leave. Without a readable light, a short pause.
+        bool red = false;
+        if (world_ && world_->valid) {
+            const Vec2 front = path.positionAt(std::clamp(frontS, 0.0, path.length()));
+            const double yaw = path.yawAt(std::clamp(frontS, 0.0, path.length()));
+            for (const auto& l : world_->lights) {
+                const Vec2 rel = l.position - front;
+                const double along = dot(rel, coords::yawToDirection(yaw));
+                if (along < -5.0 || along > 60.0 || std::abs(cross(coords::yawToDirection(yaw), rel)) > 15.0) continue;
+                red = red || l.state == LightState::Red || l.state == LightState::AmberToRed;
+            }
+        }
+        if ((waited > 5.0 && !red) || waited > 45.0) {
+            clearStop(stop.segment);
+            serviceSince_ = -1.0;
+            if (log_) log_->info("Weigh station: done after {:.0f} s{}", waited, red ? " (light still red)" : "");
+            setMessage("Weigh station done");
+        }
+        return;
+    }
+
+    // Fuel: hold the game's "activate" control while the tank fills.
+    activate_ = true;
+    if (s.fuel >= 0.0 && s.fuel > fuelBest_ + 0.3) {
+        fuelBest_ = s.fuel;
+        fuelLastRise_ = s.time;
+        if (!refuelling_ && log_) log_->info("Refuelling started");
+        refuelling_ = true;
+    }
+    const bool full = vc.fuelCapacity > 1.0 && s.fuel >= 0.98 * vc.fuelCapacity;
+    if (refuelling_ && (full || s.time - fuelLastRise_ > 4.0)) {
+        clearStop(stop.segment);
+        serviceSince_ = -1.0;
+        activate_ = false;
+        if (log_) {
+            log_->info("Refuelled: {:.0f} of {:.0f} litres", s.fuel, vc.fuelCapacity);
+        }
+        setMessage("Refuelled");
+    } else if (!refuelling_ && waited > 6.0) {
+        activate_ = false;
+        serviceSince_ = -1.0;
+        if (++fuelTries_ <= 3) {
+            serviceNudge_ += 4.0;
+            if (log_) log_->info("No fuel flowing yet; moving forward 4 m to try again");
+        } else {
+            clearStop(stop.segment);
+            if (log_) log_->warn("Refuelling did not start at this pump; refuel manually or let ATSPilot try another");
+            setMessage("Refuelling failed");
+        }
+    }
+}
+
+bool Autopilot::rightOnRed(const PathStop& stop, const VehicleState& s, const Path& path, double lineDistance) {
+    if (rorCommitted_ == stop.segment) return true;
+    // A right turn: the lane through the junction turns 60-150 degrees right.
+    const double lineS = std::clamp(stop.s, 0.0, path.length());
+    const double yaw0 = path.yawAt(lineS + 1.0);
+    double turn = 0.0;
+    for (double l = 10.0; l <= 50.0; l += 5.0) turn = std::min(turn, headingDifference(yaw0, path.yawAt(lineS + l)));
+    if (turn > -degToRad(60.0) || turn < -degToRad(150.0)) return false;
+
+    // A full stop at the line first.
+    const bool atLine = lineDistance < 3.0 && std::abs(s.speed) < 0.3;
+    if (!atLine) {
+        if (rorSegment_ == stop.segment) rorSince_ = -1.0;
+        return false;
+    }
+    if (rorSegment_ != stop.segment || rorSince_ < 0.0) {
+        rorSegment_ = stop.segment;
+        rorSince_ = s.time;
+        rorClearSince_ = -1.0;
+        setMessage("Red light: turning right when clear");
+        return false;
+    }
+
+    // Clear: nothing moving in the junction, nothing coming along the road being
+    // joined within 8 s, and no oncoming vehicle near the junction that could be
+    // turning left into it.
+    bool clear = world_ && world_->valid;
+    if (clear) {
+        double exitS = lineS + 25.0;
+        for (double l = 10.0; l <= 50.0; l += 5.0) {
+            if (headingDifference(yaw0, path.yawAt(lineS + l)) <= 0.8 * turn) {
+                exitS = lineS + l;
+                break;
+            }
+        }
+        const Vec2 line = path.positionAt(lineS);
+        const Vec2 exit = path.positionAt(std::min(exitS, path.length()));
+        const Vec2 exitDir = coords::yawToDirection(path.yawAt(std::min(exitS, path.length())));
+        const Vec2 approachDir = coords::yawToDirection(yaw0);
+        for (const auto& v : world_->vehicles) {
+            const Vec2 rel = v.position - exit;
+            const double along = dot(rel, exitDir);
+            const double lateral = cross(exitDir, rel);
+            const double headingJoin = std::cos(v.yaw - std::atan2(exitDir.y, exitDir.x));
+            if (v.speed > 0.5 && distance(v.position, line) < 25.0 && distance(v.position, exit) < 30.0) {
+                clear = false;  // moving in the junction
+            } else if (headingJoin > 0.7 && along < 10.0 && along > -200.0 && std::abs(lateral) < 9.0) {
+                const double gap = v.speed > 1.0 ? -along / v.speed : 1e9;
+                if (gap < 8.0 || along > -15.0) clear = false;  // coming along the road we join
+            } else if (std::cos(v.yaw - (std::atan2(approachDir.y, approachDir.x) + kPi)) > 0.7 && v.speed > 1.0 &&
+                       distance(v.position, line) < 60.0 && dot(v.position - line, approachDir) > 0.0) {
+                clear = false;  // oncoming, may turn left into the same road
+            }
+        }
+    }
+    if (!clear) {
+        rorClearSince_ = -1.0;
+        return false;
+    }
+    if (rorClearSince_ < 0.0) rorClearSince_ = s.time;
+    if (s.time - rorSince_ < 2.0 || s.time - rorClearSince_ < 1.0) return false;
+    rorCommitted_ = stop.segment;
+    if (log_) log_->info("Turning right on red");
+    setMessage("Turning right on red");
+    return true;
 }
 
 double Autopilot::cruiseTarget(const VehicleState& s) {
@@ -568,6 +722,7 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
             else baseTarget_ = std::max(limit, baseTarget_ - eff_.planner.limitDecel * dt);
         }
         double target = std::min(setSpeed_, baseTarget_);
+        activate_ = false;
         std::vector<SpeedConstraint> constraints;
         std::optional<PathStop> nextStop;  // the next stop that needs the driver's throttle tap
         double nextStopRearS = 0.0;
@@ -624,6 +779,14 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
             }
 
             for (const auto& stop : path->stops) {
+                if (stop.kind == StopKind::Fuel || stop.kind == StopKind::Weigh) {
+                    const bool cleared = std::find(clearedStops_.begin(), clearedStops_.end(), stop.segment) !=
+                                         clearedStops_.end();
+                    if (!cleared && stop.s + serviceFrontOffset(stop, vc) > frontS - 3.0) {
+                        serviceStop(stop, s, vc, path->path, frontS, toFront, constraints);
+                    }
+                    continue;
+                }
                 if (stop.s < frontS - 1.0) continue;  // already at or past it
                 const bool cleared = std::find(clearedStops_.begin(), clearedStops_.end(), stop.segment) !=
                                      clearedStops_.end();
@@ -699,6 +862,10 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
                         continue;
                     }
                     if (d == SignalDecision::Stop) {
+                        if (eff_.intersections.rightOnRed && match.light && match.light->state == LightState::Red &&
+                            rightOnRed(stop, s, path->path, distance)) {
+                            continue;
+                        }
                         constraints.push_back({stop.s - front, 0.0});
                         continue;
                     }
@@ -817,6 +984,7 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
 
     cmd.buttons.merge(blinkers(s, path, s.time));
     cmd.indicator = indicatorHold_;
+    cmd.activate = activate_ && mode_ == PilotMode::Autopilot;
 
     status_.mode = mode_;
     last_ = cmd;

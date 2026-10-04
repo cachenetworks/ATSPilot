@@ -202,6 +202,16 @@ bool RoadNetwork::save(const std::filesystem::path& file, const std::string& fin
         put(f, static_cast<std::uint32_t>(nodes_.size()));
         f.write(reinterpret_cast<const char*>(nodes_.data()),
                 static_cast<std::streamsize>(nodes_.size() * sizeof(NodePoint)));
+        put(f, static_cast<std::uint32_t>(services_.size()));
+        for (const auto& sp : services_) {
+            put(f, static_cast<std::uint8_t>(sp.kind));
+            put(f, sp.position.x);
+            put(f, sp.position.y);
+            put(f, sp.yaw);
+            put(f, sp.lane);
+            put(f, sp.s);
+            put(f, sp.offset);
+        }
         if (!f) return false;
     }
     std::filesystem::rename(tmp, file, ec);
@@ -293,6 +303,21 @@ std::optional<RoadNetwork> RoadNetwork::load(const std::filesystem::path& file, 
     if (!f.read(reinterpret_cast<char*>(net.nodes_.data()), static_cast<std::streamsize>(nodeCount * sizeof(NodePoint)))) {
         if (error) *error = "truncated cache";
         return std::nullopt;
+    }
+    std::uint32_t serviceCount = 0;
+    if (!get(f, serviceCount) || serviceCount > 1000000) {
+        if (error) *error = "truncated cache";
+        return std::nullopt;
+    }
+    net.services_.resize(serviceCount);
+    for (auto& sp : net.services_) {
+        std::uint8_t kind = 0;
+        if (!get(f, kind) || !get(f, sp.position.x) || !get(f, sp.position.y) || !get(f, sp.yaw) || !get(f, sp.lane) ||
+            !get(f, sp.s) || !get(f, sp.offset) || sp.lane >= count) {
+            if (error) *error = "truncated cache";
+            return std::nullopt;
+        }
+        sp.kind = static_cast<ServiceKind>(kind);
     }
     for (const auto& s : net.segments_) {
         for (auto n : s.next) {

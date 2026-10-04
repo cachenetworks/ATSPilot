@@ -9,6 +9,7 @@
 //   mix lblinker     `keyboard.lbracket?0 || ... | semantical.lblinker?0` (and rblinker)
 //   mix quickpark    `keyboard.q?0 | semantical.quickpark?0`
 //   mix lblinkerh    `semantical.lblinkerh?0`   (and rblinkerh: signal while held)
+//   mix activate     `keyboard.enter?0 | joy.b1?0 | semantical.activate?0`  (refuelling)
 //
 // so ATSPilot adds to, and never replaces, the player's input. Analogue values of
 // zero are neutral; buttons are pressed for exactly one input frame. Verified
@@ -39,6 +40,7 @@ enum InputIndex : scs_u32_t {
     kQuickPark,
     kLeftHold,
     kRightHold,
+    kActivate,
     kInputCount
 };
 
@@ -57,6 +59,7 @@ const scs_input_device_input_t g_inputs[kInputCount] = {
     {"quickpark", "ATSPilot Quick Park", SCS_VALUE_TYPE_bool},
     {"lblinkerh", "ATSPilot Left Signal Hold", SCS_VALUE_TYPE_bool},
     {"rblinkerh", "ATSPilot Right Signal Hold", SCS_VALUE_TYPE_bool},
+    {"activate", "ATSPilot Activate", SCS_VALUE_TYPE_bool},
 };
 
 constexpr bool isButton(scs_u32_t i) { return i >= kCruiseToggle; }
@@ -97,6 +100,7 @@ SCSAPI_RESULT onInputEvent(scs_input_event_t* const event, const scs_u32_t flags
             g_target[kQuickPark] = buttons.quickPark ? 1.0f : 0.0f;
             g_target[kLeftHold] = out.indicator > 0 ? 1.0f : 0.0f;
             g_target[kRightHold] = out.indicator < 0 ? 1.0f : 0.0f;
+            g_target[kActivate] = out.activate ? 1.0f : 0.0f;
         }
         // One event per changed input; the game calls again until not_found.
         for (scs_u32_t i = 0; i < kInputCount; ++i) {

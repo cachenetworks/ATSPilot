@@ -72,6 +72,14 @@ struct IntersectionConfig {
     double yieldSpeed = 4.0;        // m/s through give-way and railway-crossing lanes
     double goTapMaxSeconds = 1.5;   // a throttle tap shorter than this while waiting means "go"
     double stopLineMargin = 1.5;    // m between the truck's front and the stop line
+    bool rightOnRed = true;         // turn right on red after a full stop, when clear
+};
+
+// Stops on the way: refuelling and weigh stations.
+struct ServicesConfig {
+    bool refuel = true;             // drive to a fuel station and refuel when low
+    double refuelBelow = 0.25;      // fraction of the tank
+    bool weighStations = true;      // pull into weigh stations on the route
 };
 
 // Reading and writing the game's own memory for what the SDK does not expose.
@@ -138,6 +146,7 @@ struct Config {
     ControlsConfig controls;
     IngameConfig ingame;
     IntersectionConfig intersections;
+    ServicesConfig services;
     GameMemoryConfig memory;
     TrafficParams traffic;
     MapConfig map;

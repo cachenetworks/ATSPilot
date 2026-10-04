@@ -46,12 +46,24 @@ struct MapCompany {
     std::uint64_t node = 0;
 };
 
+// A service item (gas station, weigh station, ...) or a fuel pump item: a map
+// node, the prefab it belongs to, and further nodes (a service's area outline).
+struct MapServiceItem {
+    std::uint32_t type = 0;  // 7 = service, 35 = fuel pump
+    std::uint64_t uid = 0;
+    std::uint32_t flags = 0;
+    std::uint64_t node = 0;
+    std::uint64_t prefab = 0;
+    std::vector<std::uint64_t> nodes;
+};
+
 struct SectorData {
     std::uint32_t version = 0;
     std::vector<MapNode> nodes;
     std::vector<MapRoad> roads;
     std::vector<MapPrefab> prefabs;
     std::vector<MapCompany> companies;
+    std::vector<MapServiceItem> services;
     std::size_t itemCount = 0;
 };
 

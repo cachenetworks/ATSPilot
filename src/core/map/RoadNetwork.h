@@ -64,6 +64,19 @@ struct Destination {
     std::vector<std::uint32_t> lanes;
 };
 
+// Where the truck stops for a service: a fuel pump or a weigh-station scale,
+// with the lane that passes it and how far along that lane it lies.
+enum class ServiceKind : std::uint8_t { Fuel = 0, Weigh = 1 };
+
+struct ServicePoint {
+    ServiceKind kind = ServiceKind::Fuel;
+    Vec2 position;
+    float yaw = 0.0f;
+    std::uint32_t lane = 0;
+    float s = 0.0f;         // along `lane`
+    float offset = 0.0f;    // lateral distance from the lane
+};
+
 // A map node (road or prefab connection point) by uid, in plan coordinates. The
 // in-game GPS route is a list of these uids.
 struct NodePoint {
@@ -75,7 +88,7 @@ struct NodePoint {
 // Lane-level road graph for the whole map with a uniform-grid spatial index.
 class RoadNetwork {
 public:
-    static constexpr std::uint32_t kFormatVersion = 5;
+    static constexpr std::uint32_t kFormatVersion = 6;
 
     std::uint32_t add(LaneSegment seg);
     void finalize();  // builds the spatial index and predecessor lists
@@ -88,6 +101,9 @@ public:
     void addDestination(Destination d) { destinations_.push_back(std::move(d)); }
     const std::vector<Destination>& destinations() const { return destinations_; }
     const Destination* findDestination(std::uint64_t city, std::uint64_t company) const;
+
+    void addService(const ServicePoint& p) { services_.push_back(p); }
+    const std::vector<ServicePoint>& services() const { return services_; }
 
     void setNodes(std::vector<NodePoint> nodes);  // sorted by uid here
     std::optional<Vec2> nodePosition(std::uint64_t uid) const;
@@ -115,6 +131,7 @@ private:
     std::vector<LaneSegment> segments_;
     std::vector<Destination> destinations_;
     std::vector<NodePoint> nodes_;  // sorted by uid
+    std::vector<ServicePoint> services_;
     std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> roadLanes_;  // road item uid -> lanes
     std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> grid_;
 };

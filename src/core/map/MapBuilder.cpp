@@ -272,6 +272,7 @@ std::optional<RoadNetwork> buildRoadNetwork(const MapBuildOptions& options, MapB
     std::vector<MapRoad> roads;
     std::vector<MapPrefab> prefabs;
     std::vector<MapCompany> companies;
+    std::vector<MapServiceItem> serviceItems;
     for (std::size_t i = 0; i < sectorFiles.size(); ++i) {
         if (cancelled(options)) return std::nullopt;
         if (i % 50 == 0) report(options, 0.05 + 0.6 * i / sectorFiles.size(), "Parsing map sectors");
@@ -287,6 +288,7 @@ std::optional<RoadNetwork> buildRoadNetwork(const MapBuildOptions& options, MapB
             roads.insert(roads.end(), sector.roads.begin(), sector.roads.end());
             for (auto& p : sector.prefabs) prefabs.push_back(std::move(p));
             companies.insert(companies.end(), sector.companies.begin(), sector.companies.end());
+            for (auto& s : sector.services) serviceItems.push_back(std::move(s));
             ++stats.sectors;
         } catch (const std::exception& e) {
             ++stats.sectorErrors;
@@ -301,6 +303,13 @@ std::optional<RoadNetwork> buildRoadNetwork(const MapBuildOptions& options, MapB
     // --- Prefab nav curves -----------------------------------------------------
     report(options, 0.7, "Building junction curves");
     std::unordered_map<std::uint64_t, std::shared_ptr<const PrefabDescription>> descCache;
+    struct RawService {
+        ServiceKind kind = ServiceKind::Fuel;
+        Vec2 position;
+        double yaw = 0.0;
+        std::uint64_t prefab = 0;
+    };
+    std::vector<RawService> rawServices;
     for (const auto& prefab : prefabs) {
         if (cancelled(options)) return std::nullopt;
         if (prefab.nodes.empty()) continue;
@@ -358,6 +367,16 @@ std::optional<RoadNetwork> buildRoadNetwork(const MapBuildOptions& options, MapB
         }
         for (std::size_t ci = 0; ci < desc->curves.size(); ++ci) {
             for (int n : desc->curves[ci].next) net.mutableSegments()[curveIds[ci]].next.push_back(curveIds[n]);
+        }
+        for (const auto& sp : desc->spawnPoints) {
+            if (sp.type != SpawnType::Gas && sp.type != SpawnType::WeighStation) continue;
+            const Vec3 dir = rotate(sp.rotation.rotate({0.0, 0.0, -1.0}));
+            RawService rs;
+            rs.kind = sp.type == SpawnType::Gas ? ServiceKind::Fuel : ServiceKind::Weigh;
+            rs.position = coords::worldToPlan(place(sp.position));
+            rs.yaw = std::atan2(-dir.z, dir.x);
+            rs.prefab = prefab.uid;
+            rawServices.push_back(rs);
         }
 
         // Placement check: every descriptor node must land on its map node.
@@ -809,6 +828,52 @@ std::optional<RoadNetwork> buildRoadNetwork(const MapBuildOptions& options, MapB
     }
     stats.destinations = net.destinations().size();
     stats.companies = companies.size();
+
+    if (std::getenv("ATSPILOT_DUMP_SERVICES")) {
+        std::unordered_map<std::uint32_t, int> byKey;
+        int shown = 0;
+        for (const auto& si : serviceItems) {
+            ++byKey[si.type * 1000 + (si.flags & 0xFF)];
+            const auto n = nodes.find(si.node);
+            if (n == nodes.end() || shown >= 60) continue;
+            ++shown;
+            const Vec2 p = coords::worldToPlan(n->second.position);
+            double gas = 1e9;
+            for (const auto& rs : rawServices) gas = std::min(gas, distance(rs.position, p));
+            const auto pf = prefabByUid.find(si.prefab);
+            std::fprintf(stderr, "service type %u flags %08x at (%.0f, %.0f) prefab %s, %zu nodes, nearest spawn %.1f m\n",
+                         si.type, si.flags, n->second.position.x, n->second.position.z,
+                         pf != prefabByUid.end() ? tokenToString(pf->second->model).c_str() : "-", si.nodes.size(), gas);
+        }
+        for (const auto& [k, c] : byKey) std::fprintf(stderr, "service type %u flags-low %02x: %d\n", k / 1000, k % 1000, c);
+    }
+
+    // Services: the prefab lane passing nearest the pump or scale, driven in the
+    // direction the stand faces where that is clear (weigh station scales).
+    for (const auto& rs : rawServices) {
+        const auto own = lanesByItem.find(rs.prefab);
+        if (own == lanesByItem.end()) continue;
+        double best = 1e18;
+        ServicePoint sp;
+        for (const std::uint32_t id : own->second) {
+            if (segs[id].points.size() < 2) continue;
+            const LaneMatch m = net.project(id, rs.position);
+            double score = m.distance;
+            if (rs.kind == ServiceKind::Weigh && std::abs(headingDifference(m.yaw, rs.yaw)) > degToRad(60.0)) score += 50.0;
+            if (segs[id].rules & LaneRule::NoTrucks) score += 20.0;
+            if (score < best) {
+                best = score;
+                sp.lane = id;
+                sp.s = static_cast<float>(m.s);
+                sp.offset = static_cast<float>(m.distance);
+            }
+        }
+        if (best > 15.0) continue;
+        sp.kind = rs.kind;
+        sp.position = rs.position;
+        sp.yaw = static_cast<float>(rs.yaw);
+        net.addService(sp);
+    }
 
     // Geometry sanity: a non-finite or out-of-map coordinate is dropped with its
     // lane rather than indexed (it would also be meaningless to steer along).

@@ -246,10 +246,18 @@ void readItem(BinaryReader& r, std::uint32_t type, SectorData& out, bool allowCo
             break;
         }
         case Service:
-        case FuelPump:
-            r.skip(kU64 * 2);
-            r.skipArray32(kU64);
+        case FuelPump: {
+            MapServiceItem s;
+            s.type = type;
+            s.uid = h.uid;
+            s.flags = h.flags;
+            s.node = r.u64();
+            s.prefab = r.u64();
+            const std::uint32_t n = r.u32();
+            for (std::uint32_t i = 0; i < n; ++i) s.nodes.push_back(r.u64());
+            out.services.push_back(std::move(s));
             break;
+        }
         case CutPlane:
         case MapArea:
             r.skipArray32(kU64);

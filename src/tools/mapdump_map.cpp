@@ -16,6 +16,7 @@
 #include "map/MapBuilder.h"
 #include "map/RoutePlanner.h"
 #include "map/SectorParser.h"
+#include "map/ServicePlanner.h"
 #include "map/Token.h"
 #include "map/RoadNetwork.h"
 #include "math/Coordinates.h"
@@ -156,6 +157,116 @@ int companies(int argc, char** argv) {
     return 0;
 }
 
+// services <cache>: fuel pumps and weigh-station scales and the lanes passing them.
+int services(int argc, char** argv) {
+    (void)argc;
+    const auto net = loadAnyCache(argv[2]);
+    if (!net) return 1;
+    std::size_t counts[2] = {0, 0}, noTrucks[2] = {0, 0}, far[2] = {0, 0}, shown = 0;
+    for (const auto& sp : net->services()) {
+        const int k = static_cast<int>(sp.kind);
+        ++counts[k];
+        const auto& seg = net->segment(sp.lane);
+        if (seg.rules & LaneRule::NoTrucks) ++noTrucks[k];
+        if (sp.offset > 5.0f) ++far[k];
+        if (shown++ < 30 || sp.offset > 8.0f) {
+            const Vec3 w = coords::planToWorld(sp.position, 0.0);
+            std::printf("%-5s world (%.0f, %.0f) lane %u (%s, len %.0f m) s %.1f offset %.1f m yaw diff %.0f deg\n",
+                        sp.kind == ServiceKind::Fuel ? "fuel" : "weigh", w.x, w.z, sp.lane,
+                        seg.kind == LaneKind::Road ? "road" : "prefab", seg.length, sp.s, sp.offset,
+                        radToDeg(headingDifference(net->project(sp.lane, sp.position).yaw, sp.yaw)));
+        }
+    }
+    // Fuel stands by lane shape: through lanes a truck can drive past the pump on.
+    std::map<std::string, int> shapes;
+    for (const auto& sp : net->services()) {
+        if (sp.kind != ServiceKind::Fuel) continue;
+        const auto& seg = net->segment(sp.lane);
+        std::string k = std::string(seg.next.empty() ? "deadend" : "through") + (seg.length < 15.0f ? " short" : " long") +
+                        (sp.offset < 1.5f ? " on-lane" : sp.offset < 7.5f ? " beside" : " far");
+        ++shapes[k];
+    }
+    for (const auto& [k, c] : shapes) std::printf("  fuel %-28s %d\n", k.c_str(), c);
+    // Whether pump lanes connect to roads both ways (searching up to 60 lanes).
+    auto reaches = [&](std::uint32_t from, bool forward) {
+        std::vector<std::uint32_t> open{from};
+        std::vector<std::uint32_t> seen{from};
+        const std::uint64_t item = net->segment(from).itemUid;
+        for (std::size_t i = 0; i < open.size() && i < 3000; ++i) {
+            const auto& sg = net->segment(open[i]);
+            if (i > 0 && sg.itemUid != item) return true;
+            for (auto n : forward ? sg.next : sg.prev) {
+                if (std::find(seen.begin(), seen.end(), n) != seen.end()) continue;
+                seen.push_back(n);
+                open.push_back(n);
+            }
+        }
+        return false;
+    };
+    int both = 0, inOnly = 0, outOnly = 0, none = 0;
+    for (const auto& sp : net->services()) {
+        if (sp.kind != ServiceKind::Fuel) continue;
+        const bool in = reaches(sp.lane, false), out = reaches(sp.lane, true);
+        (in && out ? both : in ? inOnly : out ? outOnly : none)++;
+        if (!in && !out && none <= 4) {
+            const auto& sg = net->segment(sp.lane);
+            int lanes = 0, external = 0;
+            for (std::uint32_t id = 0; id < net->size(); ++id) {
+                const auto& o = net->segment(id);
+                if (o.itemUid != sg.itemUid) continue;
+                ++lanes;
+                for (auto n : o.next) external += net->segment(n).itemUid != sg.itemUid ? 1 : 0;
+                for (auto n : o.prev) external += net->segment(n).itemUid != sg.itemUid ? 1 : 0;
+            }
+            const Vec3 w = coords::planToWorld(sp.position, 0.0);
+            std::printf("  isolated pump at world (%.0f, %.0f): lane %u of item %016llx (%d lanes, %d external links), "
+                        "lane prev %zu next %zu\n",
+                        w.x, w.z, sp.lane, static_cast<unsigned long long>(sg.itemUid), lanes, external, sg.prev.size(),
+                        sg.next.size());
+        }
+    }
+    std::printf("fuel lanes reachable from a road and back: %d, in only %d, out only %d, neither %d\n", both, inOnly,
+                outOnly, none);
+    // How far isolated pumps are from a connected pump, and from any truck-usable road lane.
+    std::vector<Vec2> connected;
+    for (const auto& sp : net->services()) {
+        if (sp.kind == ServiceKind::Fuel && reaches(sp.lane, false) && reaches(sp.lane, true)) {
+            connected.push_back(sp.position);
+            if (connected.size() % 40 == 1) {
+                const Destination* nearest = nullptr;
+                for (const auto& d : net->destinations()) {
+                    if (!nearest || distance(d.position, sp.position) < distance(nearest->position, sp.position)) nearest = &d;
+                }
+                const Vec3 w = coords::planToWorld(sp.position, 0.0);
+                std::printf("  drivable pump at world (%.0f, %.0f), nearest depot %s %s\n", w.x, w.z,
+                            nearest ? tokenToString(nearest->city).c_str() : "-",
+                            nearest ? tokenToString(nearest->company).c_str() : "-");
+            }
+        }
+    }
+    int near100 = 0, near500 = 0, roadNear40 = 0, isolated = 0;
+    for (const auto& sp : net->services()) {
+        if (sp.kind != ServiceKind::Fuel || (reaches(sp.lane, false) && reaches(sp.lane, true))) continue;
+        ++isolated;
+        double best = 1e18;
+        for (const auto& c : connected) best = std::min(best, distance(c, sp.position));
+        near100 += best < 100.0;
+        near500 += best < 500.0;
+        for (const auto& m : net->query(sp.position, 40.0)) {
+            if (net->segment(m.segment).kind == LaneKind::Road) {
+                ++roadNear40;
+                break;
+            }
+        }
+    }
+    std::printf("isolated pumps %d: connected pump within 100 m %d, within 500 m %d; a road lane within 40 m %d; "
+                "%zu connected pumps\n",
+                isolated, near100, near500, roadNear40, connected.size());
+    std::printf("fuel %zu (%zu car-only lanes, %zu over 5 m), weigh %zu (%zu car-only, %zu over 5 m)\n", counts[0],
+                noTrucks[0], far[0], counts[1], noTrucks[1], far[1]);
+    return 0;
+}
+
 // route <cache> <from city> <from company> <to city> <to company>: plans between two depots.
 int route(int argc, char** argv) {
     if (argc < 7) return 2;
@@ -173,7 +284,15 @@ int route(int argc, char** argv) {
     int tried = 0;
     for (const auto& m : net->query(from->position, 150.0)) {
         if (net->segment(m.segment).kind != LaneKind::Road || net->segment(m.segment).next.empty()) continue;
-        r = planRoute(*net, m.segment, m.s, to->lanes);
+        // ATSPILOT_DUMP_SERVICES=weigh|fuel plans via weigh stations / a fuel pump as the plugin does.
+        if (const char* sv = std::getenv("ATSPILOT_DUMP_SERVICES")) {
+            ServicePlanOptions so;
+            so.weigh = true;
+            so.fuel = std::string(sv) == "fuel";
+            r = planRouteWithServices(*net, m.segment, m.s, to->lanes, RouteOptions{}, 0.0, 0.0, so);
+        } else {
+            r = planRoute(*net, m.segment, m.s, to->lanes);
+        }
         if (r.found || ++tried >= 8) break;
     }
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
@@ -186,6 +305,16 @@ int route(int argc, char** argv) {
     const double crow = distance(from->position, to->position);
     std::printf("route %.1f km (straight line %.1f km), %zu lanes, %zu lane changes, %zu expanded, %.0f ms\n",
                 r.length / 1000.0, crow / 1000.0, r.steps.size(), laneChanges, r.expanded, ms);
+    for (const auto& svc : r.services) {
+        double along = 0.0;
+        for (const auto& st : r.steps) {
+            if (st.segment == svc.lane) break;
+            if (!st.laneChange) along += net->segment(st.segment).length;
+        }
+        const Vec3 w = coords::planToWorld(net->segment(svc.lane).points.front().plan(), 0.0);
+        std::printf("  %s stop after %.1f km at world (%.0f, %.0f)\n", svc.kind == ServiceKind::Fuel ? "fuel" : "weigh",
+                    along / 1000.0, w.x, w.z);
+    }
 
     // Optional: list the turn signals along the route, as the planner would drive it.
     if (argc > 7 && std::string(argv[7]) == "--signals") {
@@ -455,6 +584,7 @@ int runMapCommands(int argc, char** argv) {
     if (cmd == "build") return build(argc, argv);
     if (cmd == "locate") return locate(argc, argv);
     if (cmd == "companies") return companies(argc, argv);
+    if (cmd == "services") return services(argc, argv);
     if (cmd == "route") return route(argc, argv);
     if (cmd == "reach") return reach(argc, argv);
     if (cmd == "item") return item(argc, argv);

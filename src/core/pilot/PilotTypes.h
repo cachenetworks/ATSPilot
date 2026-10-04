@@ -37,10 +37,11 @@ struct ControlCommand {
     double brake = 0.0;
     GameButtons buttons;    // one-frame presses of the game's own controls
     int indicator = 0;      // turn signal held through the game's hold controls: +1 left, -1 right
+    bool activate = false;  // the game's "activate" control held (refuelling)
     double time = 0.0;      // simulation time the command was computed for
 };
 
-enum class StopKind : std::uint8_t { Signal, StopSign, Yield, RailCrossing };
+enum class StopKind : std::uint8_t { Signal, StopSign, Yield, RailCrossing, Fuel, Weigh };
 
 const char* toString(StopKind k);
 
