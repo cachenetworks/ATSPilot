@@ -64,10 +64,18 @@ struct Destination {
     std::vector<std::uint32_t> lanes;
 };
 
+// A map node (road or prefab connection point) by uid, in plan coordinates. The
+// in-game GPS route is a list of these uids.
+struct NodePoint {
+    std::uint64_t uid = 0;
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
 // Lane-level road graph for the whole map with a uniform-grid spatial index.
 class RoadNetwork {
 public:
-    static constexpr std::uint32_t kFormatVersion = 4;
+    static constexpr std::uint32_t kFormatVersion = 5;
 
     std::uint32_t add(LaneSegment seg);
     void finalize();  // builds the spatial index and predecessor lists
@@ -80,6 +88,10 @@ public:
     void addDestination(Destination d) { destinations_.push_back(std::move(d)); }
     const std::vector<Destination>& destinations() const { return destinations_; }
     const Destination* findDestination(std::uint64_t city, std::uint64_t company) const;
+
+    void setNodes(std::vector<NodePoint> nodes);  // sorted by uid here
+    std::optional<Vec2> nodePosition(std::uint64_t uid) const;
+    std::size_t nodeCount() const { return nodes_.size(); }
 
     // Parallel lanes of the same road travelling the same way (laneIndex +-1),
     // i.e. the lanes a lane change can move to.
@@ -102,6 +114,7 @@ private:
 
     std::vector<LaneSegment> segments_;
     std::vector<Destination> destinations_;
+    std::vector<NodePoint> nodes_;  // sorted by uid
     std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> roadLanes_;  // road item uid -> lanes
     std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> grid_;
 };

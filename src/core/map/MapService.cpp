@@ -200,13 +200,23 @@ void MapService::updateRoute(const VehicleState& s, const VehicleConfig& vc, con
     // A new in-game GPS route (the player changed the destination or the GPS
     // re-routed) replaces the current route.
     {
-        std::optional<std::vector<Vec2>> pending;
+        std::optional<std::vector<std::uint64_t>> pending;
         {
             std::lock_guard lock(inMutex_);
             pending.swap(pendingGameRoute_);
         }
         if (pending) {
-            gameRoute_ = pending->size() >= 2 ? std::make_shared<const GpsCorridor>(std::move(*pending)) : nullptr;
+            std::vector<Vec2> points;
+            points.reserve(pending->size());
+            for (const auto uid : *pending) {
+                if (const auto p = net_->nodePosition(uid)) points.push_back(*p);
+            }
+            if (!pending->empty()) {
+                log_.info("In-game GPS route: {} of {} nodes found in the map data", points.size(), pending->size());
+            }
+            // Mostly unknown nodes (mods, version mismatch): do not trust it.
+            if (points.size() < 2 || points.size() * 10 < pending->size() * 9) points.clear();
+            gameRoute_ = points.size() >= 2 ? std::make_shared<const GpsCorridor>(std::move(points)) : nullptr;
             route_.reset();
             routeRetryWall_ = 0.0;
             offRouteSince_ = -1.0;
@@ -302,9 +312,9 @@ void MapService::updateRoute(const VehicleState& s, const VehicleConfig& vc, con
     }
 }
 
-void MapService::setGameRoute(std::vector<Vec2> points) {
+void MapService::setGameRoute(std::vector<std::uint64_t> nodeUids) {
     std::lock_guard lock(inMutex_);
-    pendingGameRoute_ = std::move(points);
+    pendingGameRoute_ = std::move(nodeUids);
 }
 
 void MapService::planOnce() {
@@ -377,6 +387,7 @@ void MapService::planOnce() {
     snap->generation = generation_;
     snap->navigationActive = planned.onRoute;
     snap->stops = planned.stops;
+    snap->indications = planned.indications;
     snap->gpsMatched = planned.onRoute && gpsMatched_;
     snap->routeRemaining = planned.routeRemaining;
     std::lock_guard lock(outMutex_);

@@ -150,9 +150,22 @@ Released stops are remembered by lane id so they do not trigger again.
 
 ## Blinkers and arrival
 
-Within 150 m of a "Keep", "Turn" or "Change Lane" manoeuvre, ATSPilot sets the
-matching blinker. It reads `truck.lblinker` and `truck.rblinker` and toggles to
-match. It only cancels blinkers it switched on.
+The path builder derives turn-signal intervals (`Indication`) from the geometry
+of the lanes it chains together:
+
+| Manoeuvre | Detected when | Signal on | Off |
+|---|---|---|---|
+| Lane change | a route lane change (blend to the parallel lane) | 40 m before the blend | blend complete |
+| Turn | a branch whose junction lanes turn more than 35° | 60 m before the junction lane | 60% through it |
+| Exit / fork | a branch off the straight-on lane that is at least 6 m away from it 120 m on, and still diverging | 150 m before | 40 m after |
+| Merge | lanes joining, both nearly parallel (within 35°) 80 m back, ours clearly to the side | 150 m before the join | 10 m after |
+| Lane drop | the path shifts at least 2.5 m sideways into the continuing lane | 150 m before | 10 m after |
+
+The truck's front bumper position on the path selects the active interval.
+ATSPilot reads `truck.lblinker` and `truck.rblinker` and toggles to match. It
+only cancels blinkers it switched on. `atspilot_mapdump route <cache> <city>
+<company> <city> <company> --signals` lists every signal along a route, with
+the heading change after it as a check.
 
 At a route's end (< 40 m remaining, stopped), it presses the game's
 `quickpark` and disengages with "Destination Reached".
@@ -195,10 +208,18 @@ The live light with that id nearest the stop line decides:
 | red, red-amber | stop at the line |
 | amber | stop if that needs at most `amber_max_decel` (3 m/s²), otherwise go |
 | flashing, off | give way |
-| not found | stop and wait for a throttle tap, as without game memory |
+| not found | all-way stop: stop, then go once the junction is clear |
 
-At stop signs with traffic in view, the truck stops fully for 1.5 s and goes
-once nothing is on or crossing the path within 40 m.
+Matching is by semaphore id first. Without a match, a light just before or up
+to 50 m beyond the stop line, within 25 m of the lane and facing along the road
+is used. Which way lights face relative to their traffic is learned from
+id-matched lights. Until it is known, position matching is only trusted when
+all candidate lights agree. Further signal lanes within 60 m of one just passed
+on green (inside the same junction) follow it.
+
+At stop signs, and at lights whose state cannot be read, the truck stops fully
+for 1.5 s and goes once nothing is on or crossing the path within 40 m. Only
+without game memory does ATSPilot ask for a throttle tap.
 
 ## Direct steering
 

@@ -20,6 +20,8 @@ void OverrideDetector::reset(double driverSteering) {
     throttleFrames_ = 0;
     driverSteer_ = driverSteering;
     steerBaseline_ = std::abs(driverSteering);
+    brakeHistory_.fill(0.0);
+    throttleHistory_.fill(0.0);
 }
 
 void OverrideDetector::learnMixing(double reported, double commanded, InputMixing& mixing, int& includeVotes,
@@ -57,9 +59,17 @@ OverrideKind OverrideDetector::update(const VehicleState& s, const ControlComman
         learnMixing(s.inputBrake, cmdBrake, pedalMixing_, pedalInclude_, pedalExclude_);
     }
 
+    // A pedal ATSPilot has just released still shows in the reported input for a
+    // few frames, so the driver's share is judged against its recent maximum.
+    brakeHistory_[historyPos_] = cmdBrake;
+    throttleHistory_[historyPos_] = cmdThrottle;
+    historyPos_ = (historyPos_ + 1) % brakeHistory_.size();
+    const double recentBrake = *std::max_element(brakeHistory_.begin(), brakeHistory_.end());
+    const double recentThrottle = *std::max_element(throttleHistory_.begin(), throttleHistory_.end());
+
     driverSteer_ = driverInput(s.inputSteering, cmdSteer, steerMixing_);
-    const double driverBrake = driverInput(s.inputBrake, cmdBrake, pedalMixing_);
-    const double driverThrottle = driverInput(s.inputThrottle, cmdThrottle, pedalMixing_);
+    const double driverBrake = driverInput(s.inputBrake, recentBrake, pedalMixing_);
+    const double driverThrottle = driverInput(s.inputThrottle, recentThrottle, pedalMixing_);
 
     // Brakes act immediately; steering and throttle need a few consecutive frames so
     // a single noisy sample cannot disengage the pilot.

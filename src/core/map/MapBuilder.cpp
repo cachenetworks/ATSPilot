@@ -826,6 +826,13 @@ std::optional<RoadNetwork> buildRoadNetwork(const MapBuildOptions& options, MapB
         seg.next.clear();
     }
     report(options, 0.98, "Indexing");
+    std::vector<NodePoint> nodePoints;
+    nodePoints.reserve(nodes.size());
+    for (const auto& [uid, n] : nodes) {
+        const Vec2 p = coords::worldToPlan(n.position);
+        nodePoints.push_back({uid, static_cast<float>(p.x), static_cast<float>(p.y)});
+    }
+    net.setNodes(std::move(nodePoints));
     net.finalize();
     stats.lanes = net.size();
     for (const auto& s : net.segments()) stats.points += s.points.size();

@@ -159,6 +159,8 @@ void collectLights(const Vec2& truck, double radius, std::vector<WorldLight>& ou
             l.semaphoreId = static_cast<int>(inst.id);
             l.position = planOf(sem->placement.to_global_position());
             if (distance(l.position, truck) > radius) continue;
+            const auto forward = ets2la_plugin::float3_t{0.0f, 0.0f, -1.0f}.rotate(sem->placement.rot);
+            l.yaw = std::atan2(-static_cast<double>(forward.z), static_cast<double>(forward.x));
             l.state = lightState(rule->state);
             l.timeRemaining = rule->state_time_remaining;
             out.push_back(l);
@@ -185,7 +187,7 @@ void routeHeader(RawRoute& r) {
 }
 
 struct RawNode {
-    double x = 0.0, y = 0.0, z = 0.0;
+    std::uint64_t uid = 0;
     float toEnd = 0.0f;
 };
 
@@ -194,8 +196,7 @@ void routeNodes(std::vector<RawNode>& out) {
     if (gps == nullptr || gps->simple_route_source.route_task == nullptr) return;
     for (auto& item : gps->simple_route_source.route_task->physical_route_items) {
         if (item.node == nullptr) continue;
-        out.push_back({static_cast<double>(item.node->coords.x), static_cast<double>(item.node->coords.y),
-                       static_cast<double>(item.node->coords.z), item.total_distance_till_end});
+        out.push_back({item.node->uid, item.total_distance_till_end});
     }
 }
 
@@ -284,7 +285,7 @@ WorldSnapshotPtr GameMemory::readWorld(double time, const Vec3& truckWorld, doub
     return snap;
 }
 
-std::optional<std::vector<Vec2>> GameMemory::readGpsRouteIfChanged(const Vec3& truckWorld) {
+std::optional<std::vector<std::uint64_t>> GameMemory::readGpsRouteIfChanged() {
     if (!ready() || !cfg_.gpsRoute || !gpsOk_) return std::nullopt;
     RawRoute header;
     auto readHeader = [&] { routeHeader(header); };
@@ -295,7 +296,7 @@ std::optional<std::vector<Vec2>> GameMemory::readGpsRouteIfChanged(const Vec3& t
     if (!header.active) {
         if (routeSize_ == 0) return std::nullopt;
         routeSize_ = routeFirstUid_ = routeLastUid_ = 0;
-        return std::vector<Vec2>{};
+        return std::vector<std::uint64_t>{};
     }
     if (header.size == routeSize_ && header.firstUid == routeFirstUid_ && header.lastUid == routeLastUid_) {
         return std::nullopt;
@@ -315,39 +316,11 @@ std::optional<std::vector<Vec2>> GameMemory::readGpsRouteIfChanged(const Vec3& t
 
     // Order from the truck towards the destination.
     std::stable_sort(nodes.begin(), nodes.end(), [](const RawNode& a, const RawNode& b) { return a.toEnd > b.toEnd; });
-
-    // Node coordinates are fixed point. Pick the scale that puts the route near
-    // the truck (it starts where the truck is).
-    const Vec2 truck = coords::worldToPlan(truckWorld);
-    auto nearest = [&](double scale) {
-        double best = 1e18;
-        for (const auto& n : nodes) {
-            best = std::min(best, distance(coords::worldToPlan(Vec3{n.x * scale, n.y * scale, n.z * scale}), truck));
-        }
-        return best;
-    };
-    if (routeCoordScale_ == 0.0) {
-        for (const double scale : {1.0 / 256.0, 1.0}) {
-            const double d = nearest(scale);
-            if (d < 3000.0) {
-                routeCoordScale_ = scale;
-                log_.info("Game memory: GPS route node scale 1/{:.0f} (nearest node {:.0f} m)", 1.0 / scale, d);
-                break;
-            }
-        }
-        if (routeCoordScale_ == 0.0) {
-            log_.warn("Game memory: GPS route nodes are not near the truck; GPS route following off");
-            gpsOk_ = false;
-            return std::nullopt;
-        }
-    }
-    std::vector<Vec2> pts;
-    pts.reserve(nodes.size());
-    for (const auto& n : nodes) {
-        pts.push_back(coords::worldToPlan(Vec3{n.x * routeCoordScale_, n.y * routeCoordScale_, n.z * routeCoordScale_}));
-    }
-    log_.info("In-game GPS route: {} nodes, {:.1f} km", pts.size(), nodes.front().toEnd / 1000.0);
-    return pts;
+    std::vector<std::uint64_t> uids;
+    uids.reserve(nodes.size());
+    for (const auto& n : nodes) uids.push_back(n.uid);
+    log_.info("In-game GPS route changed: {} nodes, {:.1f} km", uids.size(), nodes.front().toEnd / 1000.0);
+    return uids;
 }
 
 std::optional<double> GameMemory::readRawSteering() {

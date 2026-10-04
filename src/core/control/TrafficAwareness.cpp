@@ -136,21 +136,58 @@ TrafficPicture assessTraffic(const Path& path, double frontS, double speed, cons
     return out;
 }
 
-const WorldLight* lightForStop(const PathStop& stop, const Path& path, const std::vector<WorldLight>& lights,
-                               const TrafficParams& p) {
-    if (stop.semaphoreId < 0) return nullptr;
-    const Vec2 line = path.positionAt(std::clamp(stop.s, 0.0, path.length()));
-    const WorldLight* best = nullptr;
-    double bestD = p.lightMatchRadius;
+namespace {
+
+// Whether a light state lets traffic go (for comparing candidate lights).
+bool permits(LightState s) { return s == LightState::Green || s == LightState::Flashing || s == LightState::Off; }
+
+}  // namespace
+
+LightMatch lightForStop(const PathStop& stop, const Path& path, const std::vector<WorldLight>& lights,
+                        const TrafficParams& p, int facing) {
+    LightMatch out;
+    const double lineS = std::clamp(stop.s, 0.0, path.length());
+    const Vec2 line = path.positionAt(lineS);
+
+    if (stop.semaphoreId >= 0) {
+        double bestD = p.lightMatchRadius;
+        for (const WorldLight& l : lights) {
+            if (l.semaphoreId != stop.semaphoreId) continue;
+            const double d = distance(l.position, line);
+            if (d < bestD) {
+                bestD = d;
+                out.light = &l;
+                out.byId = true;
+            }
+        }
+        if (out.light) return out;
+    }
+
+    // By position, in the frame of the lane at the stop line.
+    const double yaw = path.yawAt(lineS);
+    const Vec2 dir = direction(yaw);
+    const Vec2 left = direction(yaw + 0.5 * kPi);
+    double bestScore = 1e18;
+    bool agree = true;
+    std::optional<bool> firstPermits;
     for (const WorldLight& l : lights) {
-        if (l.semaphoreId != stop.semaphoreId) continue;
-        const double d = distance(l.position, line);
-        if (d < bestD) {
-            bestD = d;
-            best = &l;
+        const Vec2 rel = l.position - line;
+        const double along = dot(rel, dir);
+        const double lateral = dot(rel, left);
+        if (along < -10.0 || along > 50.0 || std::abs(lateral) > 25.0) continue;
+        const double c = std::cos(l.yaw - yaw);
+        if (std::abs(c) < 0.8) continue;  // serves a crossing road
+        if (facing != 0 && (c > 0.0 ? 1 : -1) != facing) continue;  // serves oncoming traffic
+        if (!firstPermits) firstPermits = permits(l.state);
+        else if (*firstPermits != permits(l.state)) agree = false;
+        const double score = std::abs(lateral) + 0.3 * std::abs(along);
+        if (score < bestScore) {
+            bestScore = score;
+            out.light = &l;
         }
     }
-    return best;
+    if (facing == 0 && !agree) out.light = nullptr;  // ambiguous without knowing which way lights face
+    return out;
 }
 
 SignalDecision decideSignal(LightState state, double distance, double speed, const TrafficParams& p) {

@@ -37,6 +37,7 @@ struct WorldVehicle {
 struct WorldLight {
     int semaphoreId = -1;  // the prefab's semaphore id (matches PathStop::semaphoreId)
     Vec2 position;
+    double yaw = 0.0;  // direction the light's model faces, plan frame
     LightState state = LightState::Unknown;
     double timeRemaining = 0.0;  // s in the current state
 };

@@ -5,6 +5,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <unordered_map>
 
 #include "config/Config.h"
 #include "control/GameCruise.h"
@@ -78,7 +79,10 @@ private:
     void setMessage(const std::string& msg);
     void emit(PilotEvent e, const std::string& msg);
     GameButtons blinkers(const VehicleState& s, const PathSnapshotPtr& path, double time);
-    void logSignal(const PathStop& stop, LightState state, SignalDecision decision);
+    void logSignal(const PathStop& stop, LightState state, SignalDecision decision, bool byId);
+    void clearStop(std::uint32_t segment);
+    int lightFacing() const;
+    void learnLightFacing(const WorldLight& light, double travelYaw);
 
     Config cfg_;   // as configured
     Config eff_;   // with the active driving profile applied
@@ -104,18 +108,26 @@ private:
     std::optional<PathStop> waitingStop_;
     std::deque<std::uint32_t> clearedStops_;
     double tapStart_ = -1.0;
-    double stopSignSince_ = -1.0;  // stopped at a stop sign since (s), with traffic in view
+    // Stop-and-go junctions (stop signs, unreadable lights): stopped at the line since (s).
+    std::uint32_t stopAndGoSegment_ = 0xFFFFFFFFu;
+    double stopAndGoSince_ = -1.0;
+    // The last stop line passed on green, so further signal lanes of the same
+    // junction follow it; and whether lights face along or against their traffic.
+    Vec2 lastGreenLine_;
+    double lastGreenTime_ = -1e9;
+    int lightFacingVotes_ = 0;
+    std::unordered_map<std::uint32_t, LightState> loggedSignals_;
 
     WorldSnapshotPtr world_;
     bool directSteering_ = false;
-    std::uint32_t loggedSignalSegment_ = 0xFFFFFFFFu;
-    LightState loggedSignalState_ = LightState::Unknown;
     std::uint32_t unmatchedSignalLogged_ = 0xFFFFFFFFu;
 
     // Turn signals ATSPilot switched on (it never cancels the driver's own).
     bool ourLeftBlinker_ = false;
     bool ourRightBlinker_ = false;
     double lastBlinkerPress_ = -100.0;
+    double frontS_ = 0.0;              // rear axle to front bumper, m
+    double activeIndication_ = -1e9;
 
     ControlCommand last_;
     PathSnapshotPtr hintPath_;

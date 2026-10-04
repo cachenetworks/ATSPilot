@@ -230,7 +230,7 @@ void Runtime::updateFromGameMemory() {
         pilot_->disengage("Direct steering unavailable - take over");
     }
     if (map_) {
-        if (auto route = memory_->readGpsRouteIfChanged(current_.worldPosition)) map_->setGameRoute(std::move(*route));
+        if (auto route = memory_->readGpsRouteIfChanged()) map_->setGameRoute(std::move(*route));
     }
 }
 

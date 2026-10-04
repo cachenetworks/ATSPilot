@@ -52,6 +52,20 @@ struct PathStop {
     int semaphoreId = -1;  // signals: the prefab's semaphore id, matched against live light states
 };
 
+// Where along the path the turn signal should be on, and on which side. Derived
+// from the path's geometry: lane changes, turns at junctions, exits and forks,
+// and merges (on-ramps and lane drops).
+enum class IndicationKind : std::uint8_t { LaneChange, Turn, Exit, Merge };
+
+const char* toString(IndicationKind k);
+
+struct Indication {
+    double sStart = 0.0;  // path arc length where the signal goes on (front of the truck)
+    double sEnd = 0.0;    // and off again
+    int side = 0;         // +1 left, -1 right
+    IndicationKind kind = IndicationKind::LaneChange;
+};
+
 // A driving path published by the planning side, immutable once shared.
 struct PathSnapshot {
     Path path;
@@ -65,6 +79,7 @@ struct PathSnapshot {
     double routeRemaining = 0.0;    // m
     bool gpsMatched = false;        // route agrees with the in-game navigation distance
     std::vector<PathStop> stops;    // controlled junction lanes ahead, in path order
+    std::vector<Indication> indications;  // turn signal intervals, in path order
 };
 
 using PathSnapshotPtr = std::shared_ptr<const PathSnapshot>;

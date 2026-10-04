@@ -47,10 +47,10 @@ public:
     PathSnapshotPtr latestPath(double* wallTime) const;
     // Drops the current plan, e.g. after a teleport, ferry or job change.
     void invalidate(const std::string& reason);
-    // The in-game GPS route, read from the game's memory (plan coordinates from the
-    // truck to the destination; empty when the route was cleared). Routing then
+    // The in-game GPS route, read from the game's memory: map node uids from the
+    // truck to the destination (empty when the route was cleared). Routing then
     // follows it exactly, and a GPS destination without a job is driven to as well.
-    void setGameRoute(std::vector<Vec2> points);
+    void setGameRoute(std::vector<std::uint64_t> nodeUids);
 
     MapState state() const { return state_.load(); }
     double progress() const { return progress_.load(); }
@@ -86,7 +86,7 @@ private:
     double vehicleWall_ = 0.0;
     bool newVehicle_ = false;
     std::atomic<bool> invalidate_{false};
-    std::optional<std::vector<Vec2>> pendingGameRoute_;
+    std::optional<std::vector<std::uint64_t>> pendingGameRoute_;
 
     mutable std::mutex outMutex_;
     PathSnapshotPtr path_;

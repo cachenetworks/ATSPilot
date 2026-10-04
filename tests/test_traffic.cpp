@@ -71,16 +71,40 @@ TEST_CASE("a signal stop is matched to the nearest light with its semaphore id")
     stop.s = 100.0;
     stop.semaphoreId = 3;
     std::vector<WorldLight> lights(4);
-    lights[0] = {2, {101.0, 5.0}, LightState::Green, 0.0};
-    lights[1] = {3, {130.0, 6.0}, LightState::Red, 0.0};
-    lights[2] = {3, {300.0, 6.0}, LightState::Green, 0.0};  // another junction
-    lights[3] = {3, {104.0, -6.0}, LightState::AmberToRed, 0.0};
-    const WorldLight* l = lightForStop(stop, path, lights, TrafficParams{});
-    REQUIRE(l);
-    CHECK((l->state == LightState::AmberToRed));
+    lights[0] = {2, {101.0, 5.0}, 0.0, LightState::Green, 0.0};
+    lights[1] = {3, {130.0, 6.0}, 0.0, LightState::Red, 0.0};
+    lights[2] = {3, {300.0, 6.0}, 0.0, LightState::Green, 0.0};  // another junction
+    lights[3] = {3, {104.0, -6.0}, 0.0, LightState::AmberToRed, 0.0};
+    const LightMatch m = lightForStop(stop, path, lights, TrafficParams{});
+    REQUIRE(m.light);
+    CHECK(m.byId);
+    CHECK((m.light->state == LightState::AmberToRed));
+}
 
-    stop.semaphoreId = 9;  // no light with this id: unknown
-    CHECK(lightForStop(stop, path, lights, TrafficParams{}) == nullptr);
+TEST_CASE("without a matching id a light is matched by position and facing") {
+    const Path path = sim::makeStraight(500.0);
+    PathStop stop;
+    stop.s = 100.0;
+    stop.semaphoreId = 9;  // no light carries this id
+    std::vector<WorldLight> lights(3);
+    lights[0] = {1, {130.0, 4.0}, 0.0, LightState::Green, 0.0};        // across the junction, facing along
+    lights[1] = {2, {130.0, 8.0}, kPi, LightState::Red, 0.0};          // for oncoming traffic
+    lights[2] = {4, {110.0, 20.0}, 0.5 * kPi, LightState::Red, 0.0};   // for the crossing road
+    // Facing unknown: the two lights along the road disagree, so nothing is trusted.
+    CHECK(lightForStop(stop, path, lights, TrafficParams{}, 0).light == nullptr);
+    // Lights face along their traffic: ours is the green one.
+    const LightMatch along = lightForStop(stop, path, lights, TrafficParams{}, 1);
+    REQUIRE(along.light);
+    CHECK_FALSE(along.byId);
+    CHECK((along.light->state == LightState::Green));
+    // Lights face against their traffic: the red one.
+    const LightMatch against = lightForStop(stop, path, lights, TrafficParams{}, -1);
+    REQUIRE(against.light);
+    CHECK((against.light->state == LightState::Red));
+    // Nothing near the line: unknown.
+    lights.clear();
+    lights.push_back({1, {400.0, 4.0}, 0.0, LightState::Green, 0.0});
+    CHECK(lightForStop(stop, path, lights, TrafficParams{}, 1).light == nullptr);
 }
 
 TEST_CASE("signal decisions") {
@@ -156,7 +180,7 @@ TEST_CASE("the autopilot stops on red and goes on green without a throttle tap")
     stop.segment = 7;
     stop.semaphoreId = 1;
     rig.snap->stops = {stop};
-    rig.world->lights = {{1, {205.0, -6.0}, LightState::Red, 20.0}};
+    rig.world->lights = {{1, {205.0, -6.0}, 0.0, LightState::Red, 20.0}};
     for (int k = 0; k < 60 * 40; ++k) rig.step();
     CHECK(rig.vehicle.speed() < 0.3);
     CHECK(rig.frontX() < 200.0);
@@ -170,18 +194,30 @@ TEST_CASE("the autopilot stops on red and goes on green without a throttle tap")
     CHECK(rig.frontX() > 215.0);
 }
 
-TEST_CASE("an unmatched signal still waits for the driver's tap") {
+TEST_CASE("a signal whose light cannot be read is an all-way stop, not a wait for the driver") {
     TrafficRig rig;
     PathStop stop;
     stop.s = 200.0;
     stop.kind = StopKind::Signal;
     stop.segment = 7;
-    stop.semaphoreId = 4;  // no live light with this id
+    stop.semaphoreId = 4;
     rig.snap->stops = {stop};
-    rig.world->lights = {{1, {205.0, -6.0}, LightState::Green, 20.0}};
-    for (int k = 0; k < 60 * 40; ++k) rig.step();
-    CHECK(rig.vehicle.speed() < 0.3);
-    CHECK(rig.pilot.waitingAtIntersection());
+    // No light anywhere near, and a car crossing the junction for a while.
+    rig.world->vehicles = {car(208.0, -80.0, 0.5 * kPi, 12.0, 5)};
+    bool stopped = false;
+    for (int k = 0; k < 60 * 45; ++k) {
+        if (!rig.world->vehicles.empty()) {
+            rig.world->vehicles[0].position.y += 12.0 / 60.0;
+            if (rig.world->vehicles[0].position.y > 80.0) rig.world->vehicles[0].position.y = -80.0;
+        }
+        if (k == 60 * 28) rig.world->vehicles.clear();
+        rig.step();
+        stopped = stopped || (rig.vehicle.speed() < 0.3 && rig.frontX() > 190.0);
+        CHECK_FALSE(rig.pilot.waitingAtIntersection());
+    }
+    CHECK(stopped);
+    CHECK((rig.pilot.mode() == PilotMode::Autopilot));
+    CHECK(rig.frontX() > 215.0);  // through once the traffic had gone
 }
 
 TEST_CASE("a stop sign is left once crossing traffic has passed") {

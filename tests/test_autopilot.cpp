@@ -308,18 +308,19 @@ TEST_CASE("blinkers are switched on before a manoeuvre and off afterwards") {
     Rig rig;
     auto snap = std::make_shared<PathSnapshot>();
     snap->path = sim::makeStraight(4000.0);
-    snap->nextManeuver = "Keep Right";
-    snap->nextManeuverDistance = 80.0;
+    // Exit to the right: signal from the truck's position to 150 m on.
+    snap->indications = {{0.0, 150.0, -1, IndicationKind::Exit}, {400.0, 2000.0, 1, IndicationKind::Merge}};
     rig.path = snap;
     rig.toggle();
     for (int k = 0; k < 60; ++k) rig.step();
     CHECK(rig.vehicle.blinkerRight());
-    auto later = std::make_shared<PathSnapshot>(*snap);
-    later->nextManeuver = "Continue";
-    later->nextManeuverDistance = 900.0;
-    rig.path = later;
-    for (int k = 0; k < 60; ++k) rig.step();
+    CHECK_FALSE(rig.vehicle.blinkerLeft());
+    // Past the end of the interval: off again, and nothing until the merge.
+    for (int k = 0; k < 60 * 8; ++k) rig.step();
     CHECK_FALSE(rig.vehicle.blinkerRight());
+    CHECK_FALSE(rig.vehicle.blinkerLeft());
+    for (int k = 0; k < 60 * 12; ++k) rig.step();
+    CHECK(rig.vehicle.blinkerLeft());
 }
 
 TEST_CASE("arriving at the destination entrance ends the drive and asks the game to park") {

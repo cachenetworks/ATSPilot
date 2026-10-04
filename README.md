@@ -20,10 +20,10 @@ controlled with **one key**.
 | **Steering** | Pure Pursuit along the lane centre from the parsed map, written directly to the truck's steering. The lookahead shrinks in tight curves, so city turns are tracked to about 0.4 m. |
 | **Speed** | Switches on the game's cruise control and nudges its set speed with the game's +/- controls. It slows for curves, speed limits, traffic and stops. Your own cruise +/- presses set the maximum speed. Below cruise-control speed, and to brake, it uses its own pedals. |
 | **Traffic** | Sees the AI traffic around the truck. It follows the vehicle ahead at a 2 s gap and queues behind stopped vehicles. It waits for crossing traffic it would meet at a junction, and brakes hard if something cuts in. |
-| **Traffic lights** | Reads each light's state. It stops on red, stops for amber when there is room, and goes on green, with no input from you. |
+| **Traffic lights** | Reads each light's state. It stops on red, stops for amber when there is room, and goes on green, with no input from you. A light it cannot read is treated as an all-way stop. |
 | **Junctions** | Stops fully at stop signs, then pulls away once crossing traffic has cleared. Slows through give-way lanes and railway crossings. It never routes through truck-prohibited lanes. |
 | **Route** | Follows the **in-game GPS route** exactly, to a job's depot or to any destination you set on the GPS. It plans lane changes along the way. With no route it follows the road. |
-| **Blinkers** | Indicates 150 m before lane changes, exits and turns, and cancels only blinkers it switched on itself. |
+| **Blinkers** | Signals from the road geometry. For lane changes: from 40 m before the move until it is in the new lane. For turns: from 60 m before the junction. For exits and forks: from 150 m before. For merges from an on-ramp or a lane drop: toward the lane it joins. It cancels only blinkers it switched on itself. |
 | **Arrival** | Stops at the depot entrance, presses the game's **quick-park**, and switches off ("Destination Reached"). |
 | **Profiles** | `auto` (heavy haul above 25 t, otherwise normal), `comfort`, `normal`, `assertive`, `heavy_haul`. Each scales curve speed, braking and steering rate. Heavy haul caps speed at 55 mph. |
 | **HUD** | An in-game panel showing mode, speeds, cruise control, navigation, next manoeuvre, traffic ahead, the next light's state and messages. |
@@ -87,9 +87,9 @@ controls.
    entrance.
 2. Drive onto a road, settle in a lane, and press **F9**.
 3. Set your maximum speed with the **game's cruise control +/- keys**.
-4. ATSPilot obeys traffic lights and stop signs by itself. If a light's state
-   cannot be read, it stops and waits: **tap the throttle** to go. Holding the
-   throttle means you are taking over.
+4. ATSPilot obeys traffic lights and stop signs by itself. Only without game
+   memory does it stop at lights and wait: then **tap the throttle** to go.
+   Holding the throttle means you are taking over.
 5. Press **F9** again, brake, or steer to take over.
 
 The key is configurable in `[controls] toggle`. F10 and F11 are avoided because
@@ -149,7 +149,7 @@ Requirements: Windows x64, Visual Studio 2022/2026 (or Build Tools) with C++.
 CMake comes with Visual Studio; zlib and doctest are fetched automatically.
 
 ```powershell
-./build.ps1          # build, 110 unit/controller tests, simulator, package build/release/ATSPilot
+./build.ps1          # build, 112 unit/controller tests, simulator, package build/release/ATSPilot
 ./build.ps1 -Zip
 ```
 

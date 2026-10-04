@@ -41,10 +41,19 @@ struct TrafficPicture {
 TrafficPicture assessTraffic(const Path& path, double frontS, double speed, const std::vector<WorldVehicle>& vehicles,
                              const TrafficParams& p);
 
-// The live state of the traffic light controlling a signal stop, or Unknown when
-// no light with the stop's semaphore id is near its stop line.
-const WorldLight* lightForStop(const PathStop& stop, const Path& path, const std::vector<WorldLight>& lights,
-                               const TrafficParams& p);
+struct LightMatch {
+    const WorldLight* light = nullptr;
+    bool byId = false;  // matched by semaphore id rather than by position
+};
+
+// The live traffic light controlling a signal stop. Preferably the light with the
+// stop's semaphore id nearest the stop line; otherwise, by position: a light just
+// before or beyond the line, near the lane, facing along the road. `facing` is
+// +1 when lights are known to face the way their traffic drives, -1 when they
+// face against it, 0 when not yet known; then position alone is only trusted
+// when all candidate lights agree.
+LightMatch lightForStop(const PathStop& stop, const Path& path, const std::vector<WorldLight>& lights,
+                        const TrafficParams& p, int facing = 0);
 
 enum class SignalDecision { Unknown, Stop, Go, GiveWay };
 

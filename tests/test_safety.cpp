@@ -109,3 +109,19 @@ TEST_CASE("watchdog flags stale telemetry and stale paths") {
     CHECK(*w.check(10.0, 9.95, 8.0, true) == "Path stale");
     CHECK_FALSE(w.check(10.0, 9.95, 8.0, false));
 }
+
+TEST_CASE("a brake ATSPilot just released is not the driver's") {
+    // In game the reported brake input trails the command by a frame or more.
+    SafetyConfig cfg;
+    OverrideDetector d(cfg);
+    VehicleState s;
+    ControlCommand c = steerCmd(0.0);
+    c.brake = 0.3;
+    s.inputBrake = 0.3;
+    for (int k = 0; k < 5; ++k) CHECK((d.update(s, c) == OverrideKind::None));
+    c.brake = 0.0;  // released; the game still reports 0.3 for two frames
+    CHECK((d.update(s, c) == OverrideKind::None));
+    CHECK((d.update(s, c) == OverrideKind::None));
+    s.inputBrake = 0.0;
+    CHECK((d.update(s, c) == OverrideKind::None));
+}

@@ -122,6 +122,33 @@ LocalizationResult Localizer::update(const Vec2& pos, double yaw, const std::vec
 
 namespace {
 
+// Plan position `along` metres into a lane (clamped to its ends).
+Vec2 pointAlong(const LaneSegment& seg, double along) {
+    double s = 0.0;
+    for (std::size_t i = 1; i < seg.points.size(); ++i) {
+        const double d = distance(seg.points[i - 1].plan(), seg.points[i].plan());
+        if (s + d >= along) {
+            const double t = d > 1e-9 ? (along - s) / d : 0.0;
+            return lerp(seg.points[i - 1].plan(), seg.points[i].plan(), t);
+        }
+        s += d;
+    }
+    return seg.points.back().plan();
+}
+
+// Position `along` metres after the start of `first`, continuing on the
+// straightest successors.
+Vec2 pointAhead(const RoadNetwork& net, std::uint32_t first, double along) {
+    std::uint32_t cur = first;
+    for (int guard = 0; guard < 16; ++guard) {
+        const auto& seg = net.segment(cur);
+        if (along <= seg.length || seg.next.empty()) return pointAlong(seg, along);
+        along -= seg.length;
+        cur = seg.next.front();
+    }
+    return net.segment(cur).points.back().plan();
+}
+
 double smoothstep(double x) {
     x = clamp(x, 0.0, 1.0);
     return x * x * (3.0 - 2.0 * x);
@@ -136,6 +163,30 @@ std::string maneuverFor(const RoadNetwork& net, std::uint32_t from, std::uint32_
 }
 
 }  // namespace
+
+std::vector<JoinApproach> joinApproaches(const RoadNetwork& net, std::uint32_t joined, double back) {
+    std::vector<JoinApproach> out;
+    const auto& seg = net.segment(joined);
+    if (seg.points.size() < 2) return out;
+    const Vec2 joinPoint = seg.points.front().plan();
+    const Vec2 roadDir = (pointAlong(seg, 20.0) - joinPoint).normalized();
+    for (const auto p : seg.prev) {
+        // Walk back along this lane and, if it is short, its own predecessors.
+        double remaining = back;
+        std::uint32_t cur = p;
+        for (int guard = 0; guard < 8 && remaining > net.segment(cur).length && !net.segment(cur).prev.empty();
+             ++guard) {
+            remaining -= net.segment(cur).length;
+            cur = net.segment(cur).prev.front();
+        }
+        const auto& cs = net.segment(cur);
+        const double along = std::max(0.0, static_cast<double>(cs.length) - remaining);
+        const Vec2 q = pointAlong(cs, along);
+        const Vec2 dirThere = (pointAlong(cs, std::min(static_cast<double>(cs.length), along + 5.0)) - q).normalized();
+        out.push_back({p, cross(roadDir, q - joinPoint), dot(dirThere, roadDir) > std::cos(degToRad(35.0))});
+    }
+    return out;
+}
 
 PlannedPath buildPlannedPath(const RoadNetwork& net, const LaneMatch& start, const PathBuildParams& params,
                              const std::vector<std::uint32_t>& previousChain, const Route* route) {
@@ -249,8 +300,11 @@ PlannedPath buildPlannedPath(const RoadNetwork& net, const LaneMatch& start, con
         for (std::size_t i = 1; i < pts.size(); ++i) s += distance(pts[i - 1], pts[i]);
         return s;
     };
+    const IndicationParams ip;
+    std::vector<double> laneStartS(out.chain.size(), 0.0);
     for (std::size_t c = 0; c < out.chain.size(); ++c) {
         const auto& seg = net.segment(out.chain[c]);
+        laneStartS[c] = arcLength();
         if (laneChange[c] && c > 0) {
             const auto& from = net.segment(out.chain[c - 1]);
             if (from.points.size() == seg.points.size() && pts.size() >= from.points.size()) {
@@ -259,6 +313,18 @@ PlannedPath buildPlannedPath(const RoadNetwork& net, const LaneMatch& start, con
                 double startAlong = out.chain[c - 1] == start.segment ? start.s : 0.0;
                 const double remaining = std::max(1.0, from.length - startAlong);
                 const double blend = clamp(remaining * 0.8, 30.0, 150.0);
+                {
+                    // Signal from shortly before the blend until the truck is in the new lane.
+                    const Vec2 dir = (from.points.back().plan() - from.points.front().plan()).normalized();
+                    const double sBase = laneStartS[c - 1];
+                    Indication ind;
+                    ind.kind = IndicationKind::LaneChange;
+                    ind.side = cross(dir, seg.points.front().plan() - from.points.front().plan()) > 0.0 ? 1 : -1;
+                    ind.sStart = sBase + startAlong - ip.laneChangeLead;
+                    ind.sEnd = sBase + startAlong + std::min(blend, remaining);
+                    out.indications.push_back(ind);
+                }
+                laneStartS[c] = laneStartS[c - 1];
                 double along = 0.0;
                 for (std::size_t j = 0; j < from.points.size(); ++j) {
                     if (j > 0) along += distance(from.points[j - 1].plan(), from.points[j].plan());
@@ -286,6 +352,74 @@ PlannedPath buildPlannedPath(const RoadNetwork& net, const LaneMatch& start, con
             // what a merge, lane drop or imperfect join leaves behind.
             const Vec2 gap = seg.points.front().plan() - pts.back();
             if (gap.length() >= 1.0) joins.push_back({pts.size(), gap});
+            if (pts.size() >= 2) {
+                // A lane drop: the path shifts sideways into the continuing lane.
+                const Vec2 dir = (pts.back() - pts[pts.size() - 2]).normalized();
+                const double side = cross(dir, gap);
+                if (std::abs(side) >= ip.minOffset) {
+                    const double at = arcLength();
+                    out.indications.push_back({at - ip.mergeLead, at + 10.0, side > 0.0 ? 1 : -1, IndicationKind::Merge});
+                }
+            }
+        }
+        if (c > 0 && !laneChange[c]) {
+            const std::uint32_t prevId = out.chain[c - 1];
+            const auto& prev = net.segment(prevId);
+            const double at = arcLength();
+            if (prev.next.size() > 1) {
+                // A branch. Through a junction a large heading change is a turn;
+                // otherwise leaving the straightest option is an exit or fork.
+                double turn = 0.0;
+                if (seg.kind == LaneKind::Prefab) {
+                    double yawIn = endYaw(prev);
+                    double yawOut = endYaw(seg);
+                    for (std::size_t k = c + 1; k < out.chain.size(); ++k) {
+                        const auto& nk = net.segment(out.chain[k]);
+                        if (nk.kind != LaneKind::Prefab || nk.itemUid != seg.itemUid || laneChange[k]) break;
+                        yawOut = endYaw(nk);
+                    }
+                    turn = headingDifference(yawIn, yawOut);
+                }
+                if (std::abs(turn) > degToRad(ip.turnAngleDeg)) {
+                    out.indications.push_back(
+                        {at - ip.turnLead, at + 0.6 * seg.length, turn > 0.0 ? 1 : -1, IndicationKind::Turn});
+                } else {
+                    // An exit or fork leaves the straight-on option and keeps moving away
+                    // from it; a parallel lane of the same road does not.
+                    const std::uint32_t straight = chooseSuccessor(net, prevId, {}, params.choiceHorizon);
+                    if (straight != out.chain[c]) {
+                        const Vec2 dir = Vec2{std::cos(endYaw(prev)), std::sin(endYaw(prev))};
+                        const double near = cross(dir, pointAhead(net, out.chain[c], 40.0) - pointAhead(net, straight, 40.0));
+                        const double far = cross(dir, pointAhead(net, out.chain[c], 120.0) - pointAhead(net, straight, 120.0));
+                        if (std::abs(far) >= ip.exitSeparation && std::abs(far) > std::abs(near) + 1.5 &&
+                            (std::abs(near) < 1.0 || (far > 0.0) == (near > 0.0))) {
+                            out.indications.push_back(
+                                {at - ip.exitLead, at + 40.0, far > 0.0 ? 1 : -1, IndicationKind::Exit});
+                        }
+                    }
+                }
+            }
+            if (seg.prev.size() > 1) {
+                // Lanes join here: a merge when they arrive side by side and nearly
+                // parallel (an on-ramp). Junction curves that end on the same lane
+                // arrive from different directions and are not merges. The lane that
+                // comes in from the side signals towards the continuing road.
+                const auto approaches = joinApproaches(net, out.chain[c]);
+                const JoinApproach* ours = nullptr;
+                for (const auto& j : approaches) {
+                    if (j.lane == prevId) ours = &j;
+                }
+                bool mainRoad = false;
+                for (const auto& j : approaches) {
+                    if (ours && j.lane != prevId) {
+                        mainRoad = mainRoad || (j.parallel && std::abs(j.offset) + 1.0 < std::abs(ours->offset));
+                    }
+                }
+                if (ours && ours->parallel && mainRoad && std::abs(ours->offset) >= ip.minOffset) {
+                    out.indications.push_back(
+                        {at - ip.mergeLead, at + 10.0, ours->offset > 0.0 ? -1 : 1, IndicationKind::Merge});
+                }
+            }
         }
         for (const auto& p : seg.points) {
             if (!pts.empty() && distance(pts.back(), p.plan()) < 1e-3) continue;
@@ -323,6 +457,15 @@ PlannedPath buildPlannedPath(const RoadNetwork& net, const LaneMatch& start, con
         if (stop.s >= 0.0) stopsAhead.push_back(stop);
     }
     out.stops = std::move(stopsAhead);
+    std::vector<Indication> indicationsAhead;
+    for (auto ind : out.indications) {
+        ind.sStart -= from;
+        ind.sEnd -= from;
+        if (ind.sEnd >= 0.0) indicationsAhead.push_back(ind);
+    }
+    std::sort(indicationsAhead.begin(), indicationsAhead.end(),
+              [](const Indication& a, const Indication& b) { return a.sStart < b.sStart; });
+    out.indications = std::move(indicationsAhead);
     return out;
 }
 

@@ -60,7 +60,28 @@ struct PlannedPath {
     bool onRoute = false;          // path follows the navigation route
     double routeRemaining = 0.0;   // m, when on route
     std::vector<PathStop> stops;   // controlled junction lanes on the path (s on `path`)
+    std::vector<Indication> indications;  // turn signals (s on `path`)
 };
+
+struct IndicationParams {
+    double laneChangeLead = 40.0;  // m before a lane change blend starts
+    double turnLead = 60.0;        // m before a junction turn
+    double exitLead = 150.0;       // m before an exit or fork
+    double mergeLead = 150.0;      // m before a merge point
+    double turnAngleDeg = 35.0;    // heading change through a junction that is a turn
+    double minOffset = 2.5;        // m sideways that makes a merge or lane drop worth signalling
+    double exitSeparation = 6.0;   // m an exit must be from the straight-on lane 120 m after the fork
+};
+
+// How one lane arrives where several lanes join into `joined`: its sideways offset
+// from the continuing road `back` metres before the join (positive = left of it),
+// and whether it runs nearly parallel to the road there.
+struct JoinApproach {
+    std::uint32_t lane = 0;
+    double offset = 0.0;
+    bool parallel = false;
+};
+std::vector<JoinApproach> joinApproaches(const RoadNetwork& net, std::uint32_t joined, double back = 80.0);
 
 // Builds the rolling driving path along the lane graph. With a route that
 // contains the truck's lane, the path follows the route (including lane

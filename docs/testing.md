@@ -3,7 +3,7 @@
 ## Unit and controller tests (`tests/`, doctest)
 
 Run them with `./build.ps1`, or `ctest -C Release` in the build directory.
-There are 110 test cases. They cover:
+There are 112 test cases. They cover:
 
 - **Maths:** angle normalization and differences, curvature sign and radius,
   quaternion rotation, Hermite splines, SDK heading and world/plan conversions
@@ -62,10 +62,12 @@ There are 110 test cases. They cover:
   - a moving one is followed at the time gap
   - traffic in the next lane, oncoming or behind is ignored
   - crossing traffic only counts when the truck would meet it
-  - signal stops are matched to live lights by semaphore id
+  - signal stops are matched to live lights by semaphore id, otherwise by
+    position and learned facing (ambiguous candidates are not trusted)
   - amber: stop with room, otherwise go
   - closed loop: queue behind a stopped car and move off with it, stop on red
-    and go on green without a tap, an unmatched light still waits for a tap,
+    and go on green without a tap, a light that cannot be read is an all-way
+    stop,
     and stop signs are left once crossing traffic has passed
 - **Routing:**
   - lane neighbours

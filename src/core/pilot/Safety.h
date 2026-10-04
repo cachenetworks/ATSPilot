@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <optional>
 #include <string>
 
@@ -48,6 +49,10 @@ private:
     int throttleFrames_ = 0;
     double driverSteer_ = 0.0;
     double steerBaseline_ = 0.0;
+    // ATSPilot's recent pedal commands: the game reports pedal input a few frames late.
+    std::array<double, 4> brakeHistory_{};
+    std::array<double, 4> throttleHistory_{};
+    std::size_t historyPos_ = 0;
 };
 
 // Verifies that every input the control loop relies on is fresh.

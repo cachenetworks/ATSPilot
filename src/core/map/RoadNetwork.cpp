@@ -152,6 +152,18 @@ bool get(std::ifstream& f, T& v) {
 
 }  // namespace
 
+void RoadNetwork::setNodes(std::vector<NodePoint> nodes) {
+    std::sort(nodes.begin(), nodes.end(), [](const NodePoint& a, const NodePoint& b) { return a.uid < b.uid; });
+    nodes_ = std::move(nodes);
+}
+
+std::optional<Vec2> RoadNetwork::nodePosition(std::uint64_t uid) const {
+    const auto it = std::lower_bound(nodes_.begin(), nodes_.end(), uid,
+                                     [](const NodePoint& n, std::uint64_t u) { return n.uid < u; });
+    if (it == nodes_.end() || it->uid != uid) return std::nullopt;
+    return Vec2{it->x, it->y};
+}
+
 bool RoadNetwork::save(const std::filesystem::path& file, const std::string& fingerprint) const {
     std::error_code ec;
     std::filesystem::create_directories(file.parent_path(), ec);
@@ -187,6 +199,9 @@ bool RoadNetwork::save(const std::filesystem::path& file, const std::string& fin
             f.write(reinterpret_cast<const char*>(d.lanes.data()),
                     static_cast<std::streamsize>(d.lanes.size() * sizeof(std::uint32_t)));
         }
+        put(f, static_cast<std::uint32_t>(nodes_.size()));
+        f.write(reinterpret_cast<const char*>(nodes_.data()),
+                static_cast<std::streamsize>(nodes_.size() * sizeof(NodePoint)));
         if (!f) return false;
     }
     std::filesystem::rename(tmp, file, ec);
@@ -268,6 +283,16 @@ std::optional<RoadNetwork> RoadNetwork::load(const std::filesystem::path& file, 
                 return std::nullopt;
             }
         }
+    }
+    std::uint32_t nodeCount = 0;
+    if (!get(f, nodeCount) || nodeCount > 50000000) {
+        if (error) *error = "truncated cache";
+        return std::nullopt;
+    }
+    net.nodes_.resize(nodeCount);
+    if (!f.read(reinterpret_cast<char*>(net.nodes_.data()), static_cast<std::streamsize>(nodeCount * sizeof(NodePoint)))) {
+        if (error) *error = "truncated cache";
+        return std::nullopt;
     }
     for (const auto& s : net.segments_) {
         for (auto n : s.next) {

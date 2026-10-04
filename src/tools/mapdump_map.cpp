@@ -185,6 +185,75 @@ int route(int argc, char** argv) {
     const double crow = distance(from->position, to->position);
     std::printf("route %.1f km (straight line %.1f km), %zu lanes, %zu lane changes, %zu expanded, %.0f ms\n",
                 r.length / 1000.0, crow / 1000.0, r.steps.size(), laneChanges, r.expanded, ms);
+
+    // Optional: list the turn signals along the route, as the planner would drive it.
+    if (argc > 7 && std::string(argv[7]) == "--signals") {
+        LaneMatch at = net->project(r.steps.front().segment, net->segment(r.steps.front().segment).points.front().plan());
+        double offset = 0.0;
+        std::vector<std::uint32_t> chain;
+        std::vector<std::pair<double, Indication>> seen;
+        for (int window = 0; window < 400; ++window) {
+            PathBuildParams pp;
+            const PlannedPath p = buildPlannedPath(*net, at, pp, chain, &r);
+            if (!p.path.valid()) break;
+            if (std::getenv("ATSPILOT_DUMP_CHAIN") && window == 0) {
+                double acc = 0.0;
+                for (auto id : p.chain) {
+                    const auto& sg = net->segment(id);
+                    std::printf("    chain seg %u %s item %016llx len %.0f prev %zu next %zu at %.0f m\n", id,
+                                sg.kind == LaneKind::Road ? "road  " : "prefab", static_cast<unsigned long long>(sg.itemUid),
+                                sg.length, sg.prev.size(), sg.next.size(), acc);
+                    acc += sg.length;
+                }
+            }
+            for (const auto& ind : p.indications) {
+                const double absStart = offset + (ind.sStart - p.truckS);
+                bool dup = false;
+                for (const auto& [s0, i0] : seen) {
+                    dup = dup || (std::abs(s0 - absStart) < 25.0 && i0.side == ind.side && i0.kind == ind.kind);
+                }
+                if (dup) continue;
+                seen.push_back({absStart, ind});
+                // Heading change over the 150 m after the manoeuvre point, as a sanity check.
+                const double lead = ind.kind == IndicationKind::Exit || ind.kind == IndicationKind::Merge ? 150.0
+                                    : ind.kind == IndicationKind::Turn                                    ? 60.0
+                                                                                                          : 40.0;
+                const double at0 = std::clamp(ind.sStart + lead, 0.0, p.path.length());
+                const double at1 = std::clamp(at0 + 150.0, 0.0, p.path.length());
+                std::printf("      heading %+4.0f deg over the next 150 m, at world (%.0f, %.0f)\n",
+                            radToDeg(headingDifference(p.path.yawAt(at0), p.path.yawAt(at1))),
+                            p.path.positionAt(at0).x, -p.path.positionAt(at0).y);
+                std::printf("  %7.0f m  %-5s %-11s for %.0f m\n", absStart, ind.side > 0 ? "left" : "right",
+                            toString(ind.kind), ind.sEnd - ind.sStart);
+            }
+            const double step = std::min(400.0, p.path.length() - p.truckS - 50.0);
+            if (step < 20.0) break;
+            const double s = p.truckS + step;
+            const auto idx = p.path.segmentIndexAt(s);
+            const std::uint32_t seg = static_cast<std::uint32_t>(p.path[idx].segmentId);
+            at = net->project(seg, p.path.positionAt(s));
+            chain = p.chain;
+            offset += step;
+        }
+        std::printf("%zu signals\n", seen.size());
+        if (std::getenv("ATSPILOT_DUMP_JOINS")) {
+            double acc = 0.0;
+            for (std::size_t i = 1; i < r.steps.size(); ++i) {
+                const auto& st = r.steps[i];
+                if (!st.laneChange && net->segment(st.segment).prev.size() > 1) {
+                    std::printf("  join at %6.0f m (%s, %zu lanes in):", acc,
+                                net->segment(st.segment).kind == LaneKind::Road ? "road" : "prefab",
+                                net->segment(st.segment).prev.size());
+                    for (const auto& j : joinApproaches(*net, st.segment)) {
+                        std::printf("  %s%+.1f m%s", j.lane == r.steps[i - 1].segment ? "*" : "", j.offset,
+                                    j.parallel ? " parallel" : "");
+                    }
+                    std::printf("\n");
+                }
+                if (!st.laneChange) acc += net->segment(st.segment).length;
+            }
+        }
+    }
     return 0;
 }
 

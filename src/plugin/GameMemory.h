@@ -38,10 +38,10 @@ public:
     // Traffic and light states within `radius` metres of the truck.
     WorldSnapshotPtr readWorld(double time, const Vec3& truckWorld, double radius = 250.0);
 
-    // The in-game GPS route as plan-space points from the truck to the destination,
+    // The in-game GPS route as map node uids from the truck to the destination,
     // when it changed since the last call (nullopt when unchanged or unavailable;
     // an empty vector when the route was cleared).
-    std::optional<std::vector<Vec2>> readGpsRouteIfChanged(const Vec3& truckWorld);
+    std::optional<std::vector<std::uint64_t>> readGpsRouteIfChanged();
 
     // Steering, in the SDK's effective-steering convention ([-1, 1], left positive).
     // While ATSPilot is not steering, `observeSteering` learns how the stored value
@@ -68,7 +68,7 @@ private:
     int faults_ = 0;
 
     // Steering calibration: stored value = sign * scale * effective steering.
-    double steeringSign_ = -1.0;
+    double steeringSign_ = 1.0;  // measured in game (1.61): stored steering = SDK effective steering
     double steeringScale_ = 1.0;
     int steeringSamples_ = 0;
     int steeringAgree_ = 0;
@@ -79,8 +79,6 @@ private:
     std::uint64_t routeFirstUid_ = 0;
     std::uint64_t routeLastUid_ = 0;
     std::uint64_t routeSize_ = 0;
-    double routeCoordScale_ = 0.0;  // node coordinates are fixed point; learned on the first route
-    bool routeLogged_ = false;
 };
 
 }  // namespace atspilot::plugin
