@@ -146,6 +146,10 @@ ConfigLoadResult loadConfig(const std::string& text) {
         {"intersections", "yield_speed_mps", &c.intersections.yieldSpeed, 1.0, 15.0},
         {"intersections", "go_tap_max_s", &c.intersections.goTapMaxSeconds, 0.2, 5.0},
         {"intersections", "stop_line_margin_m", &c.intersections.stopLineMargin, 0.0, 10.0},
+        {"traffic", "time_gap_s", &c.traffic.timeGap, 0.8, 5.0},
+        {"traffic", "standstill_gap_m", &c.traffic.standstillGap, 2.0, 20.0},
+        {"traffic", "corridor_half_width_m", &c.traffic.corridorHalfWidth, 1.0, 3.0},
+        {"traffic", "amber_max_decel", &c.traffic.amberMaxDecel, 1.0, 6.0},
         {"hud", "scale", &c.hud.scale, 0.5, 3.0},
         {"hud", "opacity", &c.hud.opacity, 0.2, 1.0},
         {"debug", "log_max_mb", &c.debug.logMaxMb, 0.1, 100.0},
@@ -165,6 +169,11 @@ ConfigLoadResult loadConfig(const std::string& text) {
         {"ingame", "quick_park", &c.ingame.quickPark},
         {"intersections", "stop_at_signals", &c.intersections.stopAtSignals},
         {"intersections", "stop_at_stop_signs", &c.intersections.stopAtStopSigns},
+        {"memory", "enabled", &c.memory.enabled},
+        {"memory", "steering", &c.memory.steering},
+        {"memory", "traffic", &c.memory.traffic},
+        {"memory", "traffic_lights", &c.memory.trafficLights},
+        {"memory", "gps_route", &c.memory.gpsRoute},
         {"hud", "enabled", &c.hud.enabled},
         {"audio", "enabled", &c.audioEnabled},
         {"debug", "logging", &c.debug.logging},
@@ -285,9 +294,28 @@ use_blinkers = true         # indicate lane changes, exits and turns
 blinker_distance_m = 150
 quick_park = true           # ask the game to park once the depot entrance is reached
 
+[memory]
+# Read traffic, traffic lights and the GPS route from the game's memory, and
+# steer by setting the truck's steering directly. Only used on supported game
+# versions; otherwise ATSPilot drives with the SDK alone.
+enabled = true
+steering = true
+traffic = true              # follow traffic, queue, give way to crossing traffic
+traffic_lights = true       # stop on red, go on green
+gps_route = true            # follow the in-game GPS route exactly
+
+[traffic]
+time_gap_s = 2.0            # following distance in seconds
+standstill_gap_m = 5.0      # gap left to a stopped vehicle
+corridor_half_width_m = 1.5 # half the space the truck needs; wider means more cautious
+amber_max_decel = 3.0       # m/s^2: amber lights needing harder braking than this are passed
+
 [intersections]
-stop_at_signals = true      # stop at traffic lights and wait for a throttle tap
-stop_at_stop_signs = true   # stop at stop signs and wait for a throttle tap
+# Without live light states, ATSPilot stops at every light and stop sign and
+# waits for a throttle tap. With them, it obeys the light and pulls away from
+# stop signs once crossing traffic is clear.
+stop_at_signals = true
+stop_at_stop_signs = true
 yield_speed_mps = 4.0       # through give-way and railway-crossing lanes
 go_tap_max_s = 1.5          # a throttle tap shorter than this while waiting means "go"
 stop_line_margin_m = 1.5

@@ -10,6 +10,7 @@ add_executable(atspilot_tests
   test_safety.cpp
   test_autopilot.cpp
   test_scenarios.cpp
+  test_traffic.cpp
 )
 
 target_link_libraries(atspilot_tests PRIVATE atspilot_core doctest::doctest)

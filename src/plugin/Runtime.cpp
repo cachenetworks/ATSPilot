@@ -85,6 +85,7 @@ Runtime::~Runtime() {
         workerCv_.notify_all();
         if (worker_.joinable()) worker_.join();
         hud_.reset();
+        memory_.reset();
         if (map_) map_->stop();
         recorder_.stop();
         log_.stop();
@@ -157,7 +158,7 @@ void Runtime::initialise() {
     lo2.maxFiles = config_.debug.logFiles;
     log_.start(lo2);
 
-    log_.info("ATSPilot {} plugin initialized (data: {})", "0.2.0", paths_.dataDir.string());
+    log_.info("ATSPilot {} plugin initialized (data: {})", "0.3.0", paths_.dataDir.string());
 
     // <game>/bin/win_x64/plugins/atspilot.dll -> <game>
     paths_.gameDir = config_.map.gameDir.empty() ? thisModuleDir().parent_path().parent_path().parent_path()
@@ -205,6 +206,45 @@ void Runtime::setTelemetryActive(bool active) {
     log_.info("ATS telemetry {}", active ? "connected" : "disconnected");
 }
 
+void Runtime::setGameName(const std::string& name) {
+    if (!config_.memory.enabled || memory_) return;
+    memory_ = std::make_unique<GameMemory>(log_, config_.memory);
+    memory_->start(name);
+}
+
+void Runtime::updateFromGameMemory() {
+    if (!memory_ || !memory_->ready()) return;
+    WorldSnapshotPtr world = memory_->readWorld(current_.time, current_.worldPosition);
+    if (!worldLogged_ && (!world->vehicles.empty() || !world->lights.empty())) {
+        worldLogged_ = true;
+        log_.info("Game memory: {} traffic bodies and {} traffic lights around the truck", world->vehicles.size(),
+                  world->lights.size());
+    }
+    pilot_->setWorld(std::move(world));
+    // The steering path only changes while ATSPilot is off; losing it while
+    // driving hands control back.
+    const bool direct = memory_->steeringAvailable();
+    if (pilot_->mode() == PilotMode::Off) {
+        pilot_->setDirectSteering(direct);
+    } else if (pilot_->directSteering() && !direct) {
+        pilot_->disengage("Direct steering unavailable - take over");
+    }
+    if (map_) {
+        if (auto route = memory_->readGpsRouteIfChanged(current_.worldPosition)) map_->setGameRoute(std::move(*route));
+    }
+}
+
+void Runtime::applyDirectSteering(bool frameStart) {
+    if (!memory_ || !pilot_ || !pilot_->directSteering()) return;
+    const bool steering = pilot_->mode() != PilotMode::Off && command_.active && command_.steerActive &&
+                          wallNow() - commandWall_ <= config_.safety.commandTimeout;
+    if (steering) {
+        if (!memory_->writeSteering(command_.steering)) pilot_->disengage("Direct steering failed - take over");
+    } else if (!frameStart) {
+        memory_->observeSteering(current_.effectiveSteering);
+    }
+}
+
 void Runtime::setInputDeviceActive(bool active) {
     inputActive_ = active;
     log_.info("Input device {}", active ? "active" : "inactive");
@@ -238,6 +278,11 @@ void Runtime::onGameplayEvent(const std::string& id) {
 void Runtime::onFrameStart(double simulationTime, bool timerRestart) {
     pending_.time = simulationTime;
     if (timerRestart && pilot_ && pilot_->mode() != PilotMode::Off) pilot_->disengage("Timer restart");
+    // Re-apply the steering before the game simulates this frame.
+    try {
+        applyDirectSteering(true);
+    } catch (...) {
+    }
 }
 
 void Runtime::queueRequest(PilotRequest r) {
@@ -302,6 +347,7 @@ void Runtime::onFrameEnd() {
         havePosition_ = true;
 
         if (map_) map_->submitVehicle(current_, vehicleConfig_, now);
+        updateFromGameMemory();
         pollHotkeys();
 
         double pathWall = -1e9;
@@ -311,6 +357,7 @@ void Runtime::onFrameEnd() {
         // Game-control presses are queued until the input device sends them, since
         // several physics frames can pass between two input callbacks.
         pendingButtons_.merge(command_.buttons);
+        applyDirectSteering(false);
         recorder_.record(current_, command_, pilot_->debug(), pilot_->mode());
         publishStatus();
         flushGameLog();
@@ -336,7 +383,8 @@ OutputValues Runtime::currentOutput() {
         command_ = ControlCommand{};
         return out;
     }
-    if (command_.steerActive) {
+    // Direct steering bypasses the input mix entirely.
+    if (command_.steerActive && !pilot_->directSteering()) {
         out.steering = static_cast<float>(clamp(command_.steering * config_.steering.outputSign, -1.0, 1.0));
     }
     if (command_.pedalsActive) {
@@ -427,6 +475,10 @@ void Runtime::workerLoop() {
               << ",\"game_cruise\":" << (st.gameCruiseActive ? "true" : "false")
               << ",\"cruise_set_speed\":" << std::lround(mpsToSpeed(st.cruiseSetSpeed, units))
               << ",\"waiting_at_intersection\":" << (st.waitingAtIntersection ? "true" : "false")
+              << ",\"traffic_aware\":" << (st.trafficAware ? "true" : "false")
+              << ",\"direct_steering\":" << (st.directSteering ? "true" : "false")
+              << ",\"lead_distance_m\":" << std::lround(st.leadDistance)
+              << ",\"signal\":\"" << jsonEscape(st.signalState) << "\""
               << ",\"profile\":\"" << jsonEscape(st.profile) << "\"" << ",\"units\":\"" << unitLabel(units)
               << "\",\"speed\":" << std::lround(mpsToSpeed(st.speed, units))
               << ",\"set_speed\":" << std::lround(mpsToSpeed(st.setSpeed, units))

@@ -8,6 +8,7 @@
 #include "control/Longitudinal.h"
 #include "control/SpeedPlanner.h"
 #include "control/SteeringShaper.h"
+#include "control/TrafficAwareness.h"
 
 namespace atspilot {
 
@@ -63,11 +64,22 @@ struct IngameConfig {
 };
 
 struct IntersectionConfig {
-    bool stopAtSignals = true;      // traffic-light controlled junction lanes (state is unknown to ATSPilot)
+    bool stopAtSignals = true;      // traffic-light controlled junction lanes
     bool stopAtStopSigns = true;
     double yieldSpeed = 4.0;        // m/s through give-way and railway-crossing lanes
     double goTapMaxSeconds = 1.5;   // a throttle tap shorter than this while waiting means "go"
     double stopLineMargin = 1.5;    // m between the truck's front and the stop line
+};
+
+// Reading and writing the game's own memory for what the SDK does not expose.
+// Only used on game versions whose memory layout is known (see GameMemory.cpp);
+// everything falls back to SDK-only driving otherwise.
+struct GameMemoryConfig {
+    bool enabled = true;
+    bool steering = true;       // set the truck's steering directly instead of through the input mix
+    bool traffic = true;        // AI traffic: follow, queue, give way at junctions
+    bool trafficLights = true;  // live traffic-light states: stop on red, go on green
+    bool gpsRoute = true;       // follow the in-game GPS route exactly
 };
 
 struct MapConfig {
@@ -123,6 +135,8 @@ struct Config {
     ControlsConfig controls;
     IngameConfig ingame;
     IntersectionConfig intersections;
+    GameMemoryConfig memory;
+    TrafficParams traffic;
     MapConfig map;
     RouteConfig route;
     bool audioEnabled = true;

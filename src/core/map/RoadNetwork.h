@@ -39,6 +39,7 @@ struct LaneSegment {
     std::uint8_t laneIndex = 0;  // roads: 0 = innermost; prefabs: nav curve index (mod 256)
     bool leftSide = false;       // roads: lane travels against the road's node order
     std::uint8_t rules = 0;      // LaneRule bits
+    std::int16_t semaphoreId = -1;  // prefab lanes with a traffic light: the prefab's semaphore id
     float length = 0.0f;
     std::vector<LanePoint> points;
     std::vector<std::uint32_t> next;
@@ -66,7 +67,7 @@ struct Destination {
 // Lane-level road graph for the whole map with a uniform-grid spatial index.
 class RoadNetwork {
 public:
-    static constexpr std::uint32_t kFormatVersion = 3;
+    static constexpr std::uint32_t kFormatVersion = 4;
 
     std::uint32_t add(LaneSegment seg);
     void finalize();  // builds the spatial index and predecessor lists

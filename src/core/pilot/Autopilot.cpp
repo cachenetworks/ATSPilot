@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <format>
 
 #include "math/Coordinates.h"
 #include "math/MathUtil.h"
@@ -116,11 +117,14 @@ std::optional<std::string> Autopilot::checkAvailability(const VehicleState& s, c
 
 void Autopilot::engage(const VehicleState& s) {
     mode_ = PilotMode::Autopilot;
-    // ATSPilot's input is added to the driver's, and the game keeps the driver's
-    // steering where it was. Starting from the current wheel angle would double it,
-    // so ATSPilot's share starts at zero. While off, it outputs nothing, so the
+    // Through the input mix, ATSPilot's input is added to the driver's, and the
+    // game keeps the driver's steering where it was: starting from the current
+    // wheel angle would double it. While off, ATSPilot outputs nothing, so the
     // reported input is entirely the driver's.
-    shaper_.reset(0.0);
+    // Direct steering sets the truck's steering absolutely, so it starts where the
+    // wheel is; through the input mix it is added to the driver's and starts at zero.
+    shaper_.reset(directSteering_ ? clamp(s.effectiveSteering, -1.0, 1.0) : 0.0);
+    stopSignSince_ = -1.0;
     longitudinal_.reset(0.0, 0.0);
     cruise_ = GameCruiseManager(eff_.ingame.cruise);
     override_.reset(clamp(s.inputSteering, -1.0, 1.0));
@@ -204,6 +208,18 @@ double Autopilot::cruiseTarget(const VehicleState& s) const {
     return std::max(0.0, target);
 }
 
+void Autopilot::logSignal(const PathStop& stop, LightState state, SignalDecision decision) {
+    if (stop.segment == loggedSignalSegment_ && state == loggedSignalState_) return;
+    loggedSignalSegment_ = stop.segment;
+    loggedSignalState_ = state;
+    const char* action = decision == SignalDecision::Go       ? "go"
+                         : decision == SignalDecision::Stop    ? "stop"
+                         : decision == SignalDecision::GiveWay ? "give way"
+                                                               : "unknown";
+    if (log_) log_->info("Traffic light {} ahead: {}", toString(state), action);
+    if (decision == SignalDecision::Stop) setMessage(std::string("Traffic light ") + toString(state));
+}
+
 GameButtons Autopilot::blinkers(const VehicleState& s, const PathSnapshotPtr& path, double time) {
     GameButtons b;
     if (!eff_.ingame.useBlinkers) return b;
@@ -252,6 +268,8 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
     status_.gameCruiseActive = s.cruiseControlSpeed > 0.1;
     status_.cruiseSetSpeed = s.cruiseControlSpeed;
     status_.waitingAtIntersection = waitingStop_.has_value();
+    status_.trafficAware = world_ && world_->valid;
+    status_.directSteering = directSteering_;
     if (path) {
         status_.road = path->roadName;
         status_.nextManeuver = path->nextManeuver;
@@ -296,7 +314,11 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
         return done;
     }
 
-    OverrideKind ov = override_.update(s, last_);
+    // With direct steering none of ATSPilot's steering reaches the input mix, so
+    // all reported steering input is the driver's.
+    ControlCommand sent = last_;
+    if (directSteering_) sent.steering = 0.0;
+    OverrideKind ov = override_.update(s, sent);
     // While waiting at a stop line a short throttle tap means "go" (handled below).
     if (waitingStop_ && ov == OverrideKind::Throttle) ov = OverrideKind::None;
     if (ov != OverrideKind::None) {
@@ -408,24 +430,101 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
     } else {
         double target = cruiseTarget(s);
         std::vector<SpeedConstraint> constraints;
-        std::optional<PathStop> nextStop;
+        std::optional<PathStop> nextStop;  // the next stop that needs the driver's throttle tap
         double nextStopRearS = 0.0;
+        double strongBrake = 0.0;
+        status_.leadDistance = -1.0;
+        status_.signalState.clear();
+        const bool aware = world_ && world_->valid;  // live traffic and light states available
         if (lat && path) {
-            const double front = frontFromRear(vc) + eff_.intersections.stopLineMargin;
+            const double toFront = frontFromRear(vc);
+            const double frontS = lat->pathS + toFront;
+            const double front = toFront + eff_.intersections.stopLineMargin;
+
+            // Traffic on, or about to cross, the path. Constraints are produced at
+            // the truck's front and moved to the rear axle the planner works with.
+            TrafficPicture traffic;
+            if (aware && !world_->vehicles.empty()) {
+                traffic = assessTraffic(path->path, frontS, std::max(0.0, s.speed), world_->vehicles, eff_.traffic);
+                for (auto c : traffic.constraints) {
+                    c.s -= toFront;
+                    constraints.push_back(c);
+                }
+                if (traffic.nearest) {
+                    status_.leadDistance = traffic.nearest->s - frontS;
+                    status_.leadSpeed = traffic.nearest->speed;
+                }
+                // More than comfortable braking needed: brake directly rather than
+                // waiting for the speed loop to catch up.
+                if (traffic.requiredDecel > 2.5) strongBrake = clamp(traffic.requiredDecel / 7.0, 0.35, 0.9);
+            }
+            const bool junctionBusy = traffic.nearest && traffic.nearest->s - frontS < 40.0;
+
             for (const auto& stop : path->stops) {
-                if (stop.s < lat->pathS + frontFromRear(vc) - 1.0) continue;  // already at or past it
-                const bool hardStop = (stop.kind == StopKind::Signal && eff_.intersections.stopAtSignals) ||
-                                      (stop.kind == StopKind::StopSign && eff_.intersections.stopAtStopSigns);
+                if (stop.s < frontS - 1.0) continue;  // already at or past it
                 const bool cleared = std::find(clearedStops_.begin(), clearedStops_.end(), stop.segment) !=
                                      clearedStops_.end();
-                if (hardStop && !cleared) {
+                if (cleared) continue;
+                const double distance = stop.s - eff_.intersections.stopLineMargin - frontS;
+
+                if (stop.kind == StopKind::Signal && eff_.intersections.stopAtSignals) {
+                    SignalDecision d = SignalDecision::Unknown;
+                    if (aware) {
+                        if (const WorldLight* light = lightForStop(stop, path->path, world_->lights, eff_.traffic)) {
+                            d = decideSignal(light->state, distance, std::max(0.0, s.speed), eff_.traffic);
+                            if (status_.signalState.empty()) status_.signalState = toString(light->state);
+                            logSignal(stop, light->state, d);
+                        } else if (stop.segment != unmatchedSignalLogged_ && distance < 80.0 && log_) {
+                            unmatchedSignalLogged_ = stop.segment;
+                            std::string ids;
+                            const Vec2 line = path->path.positionAt(std::clamp(stop.s, 0.0, path->path.length()));
+                            for (const auto& l : world_->lights) {
+                                if (atspilot::distance(l.position, line) > 80.0) continue;
+                                ids += std::format(" {}@{:.0f}m:{}", l.semaphoreId, atspilot::distance(l.position, line),
+                                                   toString(l.state));
+                            }
+                            log_->info("No live light for the signal ahead (semaphore {}); nearby:{}", stop.semaphoreId,
+                                       ids.empty() ? " none" : ids);
+                        }
+                    }
+                    if (d == SignalDecision::Go) {
+                        if (waitingStop_ && waitingStop_->segment == stop.segment) waitingStop_.reset();
+                        continue;
+                    }
+                    if (d == SignalDecision::GiveWay) {
+                        constraints.push_back({stop.s - toFront, eff_.intersections.yieldSpeed});
+                        continue;
+                    }
                     constraints.push_back({stop.s - front, 0.0});
-                    if (!nextStop) {
+                    // A known red needs no tap: the light releases it.
+                    if (d == SignalDecision::Unknown && !nextStop) {
                         nextStop = stop;
                         nextStopRearS = stop.s - front;
                     }
+                } else if (stop.kind == StopKind::StopSign && eff_.intersections.stopAtStopSigns) {
+                    constraints.push_back({stop.s - front, 0.0});
+                    if (!aware) {
+                        if (!nextStop) {
+                            nextStop = stop;
+                            nextStopRearS = stop.s - front;
+                        }
+                        continue;
+                    }
+                    // With traffic in view: stop fully, then go once nothing is crossing.
+                    const bool atLine = distance < 3.0 && std::abs(s.speed) < 0.3;
+                    if (!atLine) {
+                        stopSignSince_ = -1.0;
+                    } else if (stopSignSince_ < 0.0) {
+                        stopSignSince_ = s.time;
+                    } else if (s.time - stopSignSince_ > 1.5 && !junctionBusy) {
+                        clearedStops_.push_back(stop.segment);
+                        if (clearedStops_.size() > 8) clearedStops_.pop_front();
+                        stopSignSince_ = -1.0;
+                        if (log_) log_->info("Junction clear, proceeding from stop sign");
+                        setMessage("Proceeding");
+                    }
                 } else if (stop.kind == StopKind::Yield || stop.kind == StopKind::RailCrossing) {
-                    constraints.push_back({stop.s - frontFromRear(vc), eff_.intersections.yieldSpeed});
+                    constraints.push_back({stop.s - toFront, eff_.intersections.yieldSpeed});
                 }
             }
             VehicleLoadFactors f;
@@ -470,7 +569,8 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
         status_.targetSpeed = target;
         status_.waitingAtIntersection = waitingStop_.has_value();
 
-        const bool wantBrake = waitingStop_.has_value() || s.speed > target + eff_.ingame.cruise.brakeMargin ||
+        const bool wantBrake = waitingStop_.has_value() || strongBrake > 0.0 ||
+                               s.speed > target + eff_.ingame.cruise.brakeMargin ||
                                (target < 0.5 && s.speed > 0.2);
         if (eff_.ingame.useCruiseControl) {
             const auto out = cruise_.update(s.time, s.speed, s.cruiseControlSpeed, target, wantBrake,
@@ -498,6 +598,15 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
             if (waitingStop_) {
                 pedals.throttle = 0.0;
                 pedals.brake = std::max(pedals.brake, 0.35);
+            }
+            if (strongBrake > 0.0 && s.speed > 0.3) {
+                pedals.throttle = 0.0;
+                pedals.brake = std::max(pedals.brake, strongBrake);
+            }
+            // Hold the truck while queued or held at a light rather than creeping.
+            if (target < 0.2 && std::abs(s.speed) < 0.5) {
+                pedals.throttle = 0.0;
+                pedals.brake = std::max(pedals.brake, 0.3);
             }
         } else {
             longitudinal_.reset(0.0, 0.0);

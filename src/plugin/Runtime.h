@@ -12,6 +12,7 @@
 #include <thread>
 #include <vector>
 
+#include "GameMemory.h"
 #include "Hud.h"
 #include "config/Config.h"
 #include "map/MapService.h"
@@ -63,6 +64,9 @@ public:
     void onTruckConfiguration();
     void onGameplayEvent(const std::string& id);
     void setTelemetryActive(bool active);
+    // The game's name and version from the telemetry API; starts the game-memory
+    // features when the version is supported.
+    void setGameName(const std::string& name);
     void onWheelSteering(unsigned index, float rotations);
 
     // --- Input side (main thread) ---
@@ -95,6 +99,8 @@ private:
     void publishStatus();
     void workerLoop();
     void fail(const std::string& where, const std::string& what);
+    void updateFromGameMemory();
+    void applyDirectSteering(bool frameStart);
     double wallNow() const;
 
     static Runtime* instance_;
@@ -107,6 +113,8 @@ private:
     std::unique_ptr<MapService> map_;
     std::unique_ptr<Autopilot> pilot_;
     std::unique_ptr<Hud> hud_;
+    std::unique_ptr<GameMemory> memory_;
+    bool worldLogged_ = false;
     TelemetryRecorder recorder_;
 
     VehicleState pending_;

@@ -157,6 +157,15 @@ void Hud::run() {
             rows.push_back({L"Next", widen(st.nextManeuver) + L"  " + distanceText(st.nextManeuverDistance, units_), white});
         }
         if (st.navigationActive) rows.push_back({L"Remaining", distanceText(st.routeDistance, units_), white});
+        if (st.trafficAware) {
+            rows.push_back({L"Traffic", st.leadDistance >= 0.0 ? distanceText(st.leadDistance, units_) + L" ahead"
+                                                               : std::wstring(L"clear"),
+                            st.leadDistance >= 0.0 && st.leadDistance < 30.0 ? amber : green});
+        }
+        if (!st.signalState.empty()) {
+            const bool go = st.signalState == "green";
+            rows.push_back({L"Light", widen(st.signalState), go ? green : st.signalState == "red" ? red : amber});
+        }
         if (!st.profile.empty()) rows.push_back({L"Profile", widen(st.profile), grey});
 
         const int height = pad * 2 + rowH * static_cast<int>(rows.size() + 1);

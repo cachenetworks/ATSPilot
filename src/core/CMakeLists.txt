@@ -18,6 +18,7 @@ add_library(atspilot_core STATIC
   control/Pid.cpp
   control/SpeedPlanner.cpp
   control/SteeringShaper.cpp
+  control/TrafficAwareness.cpp
   path/Path.cpp
   pilot/Autopilot.cpp
   pilot/Safety.cpp

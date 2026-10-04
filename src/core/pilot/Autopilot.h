@@ -16,6 +16,7 @@
 #include "pilot/Safety.h"
 #include "pilot/VehicleState.h"
 #include "util/Logger.h"
+#include "world/World.h"
 
 namespace atspilot {
 
@@ -47,6 +48,14 @@ public:
     // Immediate neutral output, e.g. on pause, world unload or an internal error.
     void disengage(const std::string& reason, PilotEvent evt = PilotEvent::Disengaged);
 
+    // Traffic and traffic-light states around the truck, when the game's memory
+    // can be read; null or invalid means ATSPilot drives on map data alone.
+    void setWorld(WorldSnapshotPtr world) { world_ = std::move(world); }
+    // ATSPilot's steering is written to the truck directly instead of being added
+    // to the driver's input through the input mix.
+    void setDirectSteering(bool direct) { directSteering_ = direct; }
+    bool directSteering() const { return directSteering_; }
+
     PilotMode mode() const { return mode_; }
     const PilotStatus& status() const { return status_; }
     const ControllerDebug& debug() const { return debug_; }
@@ -69,6 +78,7 @@ private:
     void setMessage(const std::string& msg);
     void emit(PilotEvent e, const std::string& msg);
     GameButtons blinkers(const VehicleState& s, const PathSnapshotPtr& path, double time);
+    void logSignal(const PathStop& stop, LightState state, SignalDecision decision);
 
     Config cfg_;   // as configured
     Config eff_;   // with the active driving profile applied
@@ -94,6 +104,13 @@ private:
     std::optional<PathStop> waitingStop_;
     std::deque<std::uint32_t> clearedStops_;
     double tapStart_ = -1.0;
+    double stopSignSince_ = -1.0;  // stopped at a stop sign since (s), with traffic in view
+
+    WorldSnapshotPtr world_;
+    bool directSteering_ = false;
+    std::uint32_t loggedSignalSegment_ = 0xFFFFFFFFu;
+    LightState loggedSignalState_ = LightState::Unknown;
+    std::uint32_t unmatchedSignalLogged_ = 0xFFFFFFFFu;
 
     // Turn signals ATSPilot switched on (it never cancels the driver's own).
     bool ourLeftBlinker_ = false;

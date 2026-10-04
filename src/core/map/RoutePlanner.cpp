@@ -8,6 +8,42 @@
 
 namespace atspilot {
 
+GpsCorridor::GpsCorridor(std::vector<Vec2> points) : points_(std::move(points)) {
+    for (std::size_t i = 0; i + 1 < points_.size(); ++i) {
+        const Vec2& a = points_[i];
+        const Vec2& b = points_[i + 1];
+        const auto x0 = static_cast<std::int64_t>(std::floor(std::min(a.x, b.x) / kCell));
+        const auto x1 = static_cast<std::int64_t>(std::floor(std::max(a.x, b.x) / kCell));
+        const auto y0 = static_cast<std::int64_t>(std::floor(std::min(a.y, b.y) / kCell));
+        const auto y1 = static_cast<std::int64_t>(std::floor(std::max(a.y, b.y) / kCell));
+        if ((x1 - x0 + 1) * (y1 - y0 + 1) > 4096) continue;  // a teleport-like jump: not a road
+        for (auto ix = x0; ix <= x1; ++ix) {
+            for (auto iy = y0; iy <= y1; ++iy) grid_[key(ix, iy)].push_back(static_cast<std::uint32_t>(i));
+        }
+    }
+}
+
+double GpsCorridor::distanceTo(const Vec2& p) const {
+    const auto cx = static_cast<std::int64_t>(std::floor(p.x / kCell));
+    const auto cy = static_cast<std::int64_t>(std::floor(p.y / kCell));
+    double best = kFar;
+    for (std::int64_t dx = -1; dx <= 1; ++dx) {
+        for (std::int64_t dy = -1; dy <= 1; ++dy) {
+            const auto it = grid_.find(key(cx + dx, cy + dy));
+            if (it == grid_.end()) continue;
+            for (const auto i : it->second) {
+                const Vec2& a = points_[i];
+                const Vec2& b = points_[i + 1];
+                const Vec2 ab = b - a;
+                const double len2 = dot(ab, ab);
+                const double t = len2 > 1e-9 ? std::clamp(dot(p - a, ab) / len2, 0.0, 1.0) : 0.0;
+                best = std::min(best, distance(p, a + ab * t));
+            }
+        }
+    }
+    return best;
+}
+
 int Route::find(std::uint32_t segment, int from) const {
     for (int i = std::max(0, from); i < static_cast<int>(steps.size()); ++i) {
         if (steps[static_cast<std::size_t>(i)].segment == segment) return i;
@@ -88,7 +124,20 @@ Route planRoute(const RoadNetwork& net, std::uint32_t startSegment, double start
                 open.push({ng + heuristic(next), next});
             }
         };
-        for (auto n : net.segment(id).next) relax(n, net.segment(n).length, false);
+        auto laneCost = [&](std::uint32_t n) {
+            const auto& seg = net.segment(n);
+            double cost = seg.length;
+            if (options.corridor && seg.points.size() >= 2) {
+                const Vec2 mid = seg.points[seg.points.size() / 2].plan();
+                const Vec2 end = seg.points.back().plan();
+                if (options.corridor->distanceTo(mid) > options.corridorWidth ||
+                    options.corridor->distanceTo(end) > options.corridorWidth) {
+                    cost *= options.offCorridorFactor;
+                }
+            }
+            return cost;
+        };
+        for (auto n : net.segment(id).next) relax(n, laneCost(n), false);
         // A lane change keeps the position along the road, so it only costs the penalty.
         for (auto n : net.laneNeighbors(id)) relax(n, options.laneChangeCost, true);
     }

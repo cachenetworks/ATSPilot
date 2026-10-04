@@ -49,6 +49,7 @@ struct PathStop {
     double s = 0.0;
     StopKind kind = StopKind::Signal;
     std::uint32_t segment = 0;
+    int semaphoreId = -1;  // signals: the prefab's semaphore id, matched against live light states
 };
 
 // A driving path published by the planning side, immutable once shared.
@@ -100,6 +101,11 @@ struct PilotStatus {
     bool gameCruiseActive = false;
     double cruiseSetSpeed = 0.0; // m/s, the game's cruise control set speed (0 = off)
     bool waitingAtIntersection = false;
+    bool trafficAware = false;   // live traffic and light states in use
+    bool directSteering = false; // steering written to the truck directly
+    double leadDistance = -1.0;  // m to the nearest vehicle on the path, < 0 = none
+    double leadSpeed = 0.0;      // m/s
+    std::string signalState;     // next traffic light, when known
     std::string profile;
     std::string road;
     std::string nextManeuver;

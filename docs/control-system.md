@@ -170,3 +170,41 @@ steering rate:
 | heavy_haul | 0.7 | 55 mph |
 
 `auto` chooses heavy_haul above 25 t of cargo.
+
+## Traffic and traffic lights (game memory)
+
+`GameMemory` reads the AI traffic around the truck and the state of nearby
+traffic lights every frame. `assessTraffic` turns them into speed constraints:
+
+- **On the path:** each body (car, tractor, trailer) is projected onto the path.
+  If its footprint reaches into the corridor (±1.5 m around the lane centre),
+  the truck aims to be at its speed `standstill_gap + time_gap · v` behind it.
+- **Crossing:** vehicles more than 30° off the path direction are extrapolated
+  for up to 4 s. If one would occupy the corridor ahead about when the truck
+  gets there (within 2.5 s), it is treated as stopped at that point.
+- **Hard braking:** if stopping behind the nearest obstacle needs more than
+  2.5 m/s², ATSPilot brakes directly in proportion instead of waiting for the
+  speed loop.
+
+Signal lanes carry their prefab's semaphore id (`LaneSegment::semaphoreId`).
+The live light with that id nearest the stop line decides:
+
+| Light | Action |
+|---|---|
+| green | go |
+| red, red-amber | stop at the line |
+| amber | stop if that needs at most `amber_max_decel` (3 m/s²), otherwise go |
+| flashing, off | give way |
+| not found | stop and wait for a throttle tap, as without game memory |
+
+At stop signs with traffic in view, the truck stops fully for 1.5 s and goes
+once nothing is on or crossing the path within 40 m.
+
+## Direct steering
+
+With game memory, the command is written to the truck's steering value instead
+of the semantical input, so the driver's own input and ATSPilot's are not added
+together. Before the first engagement, the stored value is compared with the
+SDK's effective steering while the driver steers. That gives its sign and scale,
+which are logged. The steering-direction check of the safety layer still
+applies.

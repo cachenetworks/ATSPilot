@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "map/RoadNetwork.h"
@@ -25,9 +27,38 @@ struct Route {
     int find(std::uint32_t segment, int from = 0) const;
 };
 
+// The in-game GPS route as a polyline (plan coordinates, truck to destination),
+// with a grid index for distance queries.
+class GpsCorridor {
+public:
+    explicit GpsCorridor(std::vector<Vec2> points);
+
+    bool empty() const { return points_.size() < 2; }
+    const std::vector<Vec2>& points() const { return points_; }
+    // Distance from p to the polyline; anything beyond about one grid cell is
+    // reported as `kFar`.
+    double distanceTo(const Vec2& p) const;
+
+    static constexpr double kFar = 1e9;
+
+private:
+    static constexpr double kCell = 64.0;
+    static std::uint64_t key(std::int64_t ix, std::int64_t iy) {
+        return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(ix)) << 32) | static_cast<std::uint32_t>(iy);
+    }
+    std::vector<Vec2> points_;
+    std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> grid_;  // cell -> polyline segments
+};
+
 struct RouteOptions {
     double laneChangeCost = 60.0;      // metres of driving a lane change is "worth"
     std::size_t maxExpansions = 4000000;
+    // When set, lanes away from the in-game GPS route cost `offCorridorFactor`
+    // times their length, so the search follows the game's own route. Costs only
+    // ever grow, so the straight-line heuristic stays admissible.
+    std::shared_ptr<const GpsCorridor> corridor;
+    double corridorWidth = 30.0;       // m from the GPS polyline still counted as on it
+    double offCorridorFactor = 10.0;
 };
 
 // A* over the lane graph from (startSegment, startS) to any of `goals`.

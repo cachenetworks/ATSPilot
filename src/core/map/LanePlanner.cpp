@@ -274,6 +274,7 @@ PlannedPath buildPlannedPath(const RoadNetwork& net, const LaneMatch& start, con
             PathStop stop;
             stop.s = arcLength();  // re-based after trimming below
             stop.segment = out.chain[c];
+            stop.semaphoreId = seg.semaphoreId;
             stop.kind = (r & LaneRule::Signal)   ? StopKind::Signal
                         : (r & LaneRule::Stop)   ? StopKind::StopSign
                         : (r & LaneRule::Yield)  ? StopKind::Yield

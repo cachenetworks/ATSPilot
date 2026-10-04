@@ -7,6 +7,13 @@ Copyright (C) 2016 SCS Software. Distributed under the SCS SDK licence (MIT
 terms); full text in `external/scs_sdk_1_15/LICENSE.txt`. Source:
 https://modding.scssoft.com/wiki/Documentation/Engine/SDK/Telemetry
 
+### ETS2LA game plugin structures (`third_party/ets2la_plugin`)
+Copyright (c) 2024 Dario Wouters. MIT licence; full text in
+`third_party/ets2la_plugin/LICENSE.md`. Game structure layouts and memory
+patterns from https://github.com/ETS2LA/plugin (commit `3b01d90`), based on
+https://github.com/dariowouters/ts-extra-utilities. ATSPilot's
+`src/plugin/GameMemory.cpp` adapts its traffic and traffic-light collection.
+
 ### zlib 1.3.1 (fetched at build time, statically linked)
 Copyright (C) 1995-2024 Jean-loup Gailly and Mark Adler. zlib licence:
 https://zlib.net/zlib_license.html

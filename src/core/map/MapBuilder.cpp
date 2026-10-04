@@ -350,6 +350,8 @@ std::optional<RoadNetwork> buildRoadNetwork(const MapBuildOptions& options, MapB
             seg.kind = LaneKind::Prefab;
             seg.laneIndex = static_cast<std::uint8_t>(ci & 0xFF);
             seg.rules = laneRules(curve);
+            if (curve.semaphoreId >= 0 && curve.semaphoreId < 32768)
+                seg.semaphoreId = static_cast<std::int16_t>(curve.semaphoreId);
             if (seg.rules & (LaneRule::Signal | LaneRule::Stop | LaneRule::Yield)) ++stats.controlledLanes;
             for (const auto& smp : sampleHermite(a, da, b, db)) seg.points.push_back(toLanePoint(smp.pos));
             curveIds[ci] = net.add(std::move(seg));

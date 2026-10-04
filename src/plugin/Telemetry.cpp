@@ -250,6 +250,7 @@ extern "C" SCSAPI_RESULT scs_telemetry_init(const scs_u32_t version, const scs_t
         rt.log().info("Telemetry API {}.{} on {} (game telemetry version {}.{})", SCS_GET_MAJOR_VERSION(version),
                       SCS_GET_MINOR_VERSION(version), p->common.game_name,
                       SCS_GET_MAJOR_VERSION(p->common.game_version), SCS_GET_MINOR_VERSION(p->common.game_version));
+        rt.setGameName(p->common.game_name ? p->common.game_name : "");
         if (SCS_GET_MAJOR_VERSION(p->common.game_version) != SCS_GET_MAJOR_VERSION(SCS_TELEMETRY_ATS_GAME_VERSION_CURRENT)) {
             rt.log().warn("Unexpected ATS telemetry major version; values may be misinterpreted");
         }

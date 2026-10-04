@@ -3,7 +3,7 @@
 ## Unit and controller tests (`tests/`, doctest)
 
 Run them with `./build.ps1`, or `ctest -C Release` in the build directory.
-There are 97 test cases. They cover:
+There are 110 test cases. They cover:
 
 - **Maths:** angle normalization and differences, curvature sign and radius,
   quaternion rotation, Hermite splines, SDK heading and world/plan conversions
@@ -57,6 +57,16 @@ There are 97 test cases. They cover:
   - blinkers on and off
   - arrival with quick-park
   - heavy-haul auto profile
+- **Traffic and lights:**
+  - a stopped vehicle ahead becomes a stop short of it
+  - a moving one is followed at the time gap
+  - traffic in the next lane, oncoming or behind is ignored
+  - crossing traffic only counts when the truck would meet it
+  - signal stops are matched to live lights by semaphore id
+  - amber: stop with room, otherwise go
+  - closed loop: queue behind a stopped car and move off with it, stop on red
+    and go on green without a tap, an unmatched light still waits for a tap,
+    and stop signs are left once crossing traffic has passed
 - **Routing:**
   - lane neighbours
   - A* with a required lane change, where every step must be a real edge
@@ -65,6 +75,7 @@ There are 97 test cases. They cover:
   - route-following path with a smooth lane-change blend and manoeuvre announcement
   - arrival stop
   - GPS-distance route matching picks the branch whose length matches
+  - the in-game GPS route steers A* onto its branch
   - city turn (R = 20 m) with and without curvature-limited lookahead
 - **Scenarios** (closed loop through `Autopilot`): straight, recovery from an
   offset, R = 800, R = 60, S curve, cloverleaf ramp, loaded trailer with a slow

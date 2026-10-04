@@ -144,6 +144,12 @@ void MapService::run() {
 }
 
 void MapService::checkGpsAgreement(const VehicleState& s, const PlannedPath& planned, const Config& cfg, double wall) {
+    if (gameRoute_) {
+        // Routed along the GPS route itself: nothing to infer from its distance.
+        gpsMatched_ = route_ != nullptr;
+        gpsMismatchSince_ = -1.0;
+        return;
+    }
     if (!cfg.route.matchGameGps || !route_ || !planned.onRoute || gpsScale_ <= 0.0 || s.navigationDistance <= 1.0) {
         gpsMismatchSince_ = -1.0;
         return;
@@ -191,9 +197,31 @@ void MapService::updateRoute(const VehicleState& s, const VehicleConfig& vc, con
         gpsNavAtSample_ = -1.0;
     }
 
-    const std::string key = cfg.route.enabled && vc.hasJob && !vc.destinationCompanyId.empty()
-                                ? vc.destinationCityId + "/" + vc.destinationCompanyId
-                                : std::string();
+    // A new in-game GPS route (the player changed the destination or the GPS
+    // re-routed) replaces the current route.
+    {
+        std::optional<std::vector<Vec2>> pending;
+        {
+            std::lock_guard lock(inMutex_);
+            pending.swap(pendingGameRoute_);
+        }
+        if (pending) {
+            gameRoute_ = pending->size() >= 2 ? std::make_shared<const GpsCorridor>(std::move(*pending)) : nullptr;
+            route_.reset();
+            routeRetryWall_ = 0.0;
+            offRouteSince_ = -1.0;
+            log_.info("{}", gameRoute_ ? "Following the in-game GPS route" : "In-game GPS route cleared");
+        }
+    }
+
+    std::string key;
+    if (cfg.route.enabled && vc.hasJob && !vc.destinationCompanyId.empty()) {
+        key = vc.destinationCityId + "/" + vc.destinationCompanyId;
+    } else if (cfg.route.enabled && gameRoute_) {
+        // No job, but the player set a GPS destination: drive there.
+        const Vec2 end = gameRoute_->points().back();
+        key = "gps:" + std::to_string(std::lround(end.x)) + "," + std::to_string(std::lround(end.y));
+    }
     if (key != destinationKey_) {
         destinationKey_ = key;
         route_.reset();
@@ -239,9 +267,14 @@ void MapService::updateRoute(const VehicleState& s, const VehicleConfig& vc, con
 
     if ((!route_ || gpsReplan_) && !routeFuture_.valid() && wall >= routeRetryWall_) {
         gpsReplan_ = false;
-        const Destination* dest = net_->findDestination(tokenFromString(vc.destinationCityId),
-                                                        tokenFromString(vc.destinationCompanyId));
-        if (!dest) {
+        std::vector<std::uint32_t> gpsGoals;
+        if (key.rfind("gps:", 0) == 0) {
+            for (const auto& m : net_->query(gameRoute_->points().back(), 40.0)) gpsGoals.push_back(m.segment);
+        }
+        const Destination* dest = gpsGoals.empty() ? net_->findDestination(tokenFromString(vc.destinationCityId),
+                                                                           tokenFromString(vc.destinationCompanyId))
+                                                   : nullptr;
+        if (!dest && gpsGoals.empty()) {
             if (!destinationMissingLogged_) {
                 log_.warn("Destination {} not found in the map data; following the road instead", key);
                 destinationMissingLogged_ = true;
@@ -251,12 +284,14 @@ void MapService::updateRoute(const VehicleState& s, const VehicleConfig& vc, con
         }
         RouteOptions opts;
         opts.laneChangeCost = cfg.route.laneChangeCost;
+        opts.corridor = gameRoute_;
         const RoadNetwork* net = net_.get();
         const std::uint32_t startSeg = loc.match.segment;
         const double startS = loc.match.s;
-        const std::vector<std::uint32_t> goals = dest->lanes;
-        // With a learned scale, aim for the GPS's own remaining distance.
-        const double target = cfg.route.matchGameGps && gpsScale_ > 0.0 && s.navigationDistance > 1.0
+        const std::vector<std::uint32_t> goals = dest ? dest->lanes : gpsGoals;
+        // Without the GPS route itself, aim for the GPS's remaining distance
+        // (with a learned scale) to pick the same branches it does.
+        const double target = !gameRoute_ && cfg.route.matchGameGps && gpsScale_ > 0.0 && s.navigationDistance > 1.0
                                   ? s.navigationDistance / gpsScale_
                                   : 0.0;
         const double tolerance = cfg.route.gpsTolerance;
@@ -265,6 +300,11 @@ void MapService::updateRoute(const VehicleState& s, const VehicleConfig& vc, con
                                 : planRoute(*net, startSeg, startS, goals, opts);
         });
     }
+}
+
+void MapService::setGameRoute(std::vector<Vec2> points) {
+    std::lock_guard lock(inMutex_);
+    pendingGameRoute_ = std::move(points);
 }
 
 void MapService::planOnce() {

@@ -169,6 +169,7 @@ bool RoadNetwork::save(const std::filesystem::path& file, const std::string& fin
             put(f, static_cast<std::uint8_t>(s.kind));
             put(f, s.laneIndex);
             put(f, static_cast<std::uint8_t>((s.leftSide ? 1 : 0) | (s.rules << 1)));
+            put(f, s.semaphoreId);
             put(f, static_cast<std::uint32_t>(s.points.size()));
             f.write(reinterpret_cast<const char*>(s.points.data()),
                     static_cast<std::streamsize>(s.points.size() * sizeof(LanePoint)));
@@ -218,7 +219,7 @@ std::optional<RoadNetwork> RoadNetwork::load(const std::filesystem::path& file, 
     for (auto& s : net.segments_) {
         std::uint8_t kind = 0, left = 0;
         std::uint32_t pts = 0, nexts = 0;
-        if (!get(f, s.itemUid) || !get(f, kind) || !get(f, s.laneIndex) || !get(f, left) || !get(f, pts) ||
+        if (!get(f, s.itemUid) || !get(f, kind) || !get(f, s.laneIndex) || !get(f, left) || !get(f, s.semaphoreId) || !get(f, pts) ||
             pts > 100000) {
             if (error) *error = "truncated cache";
             return std::nullopt;

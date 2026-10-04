@@ -135,3 +135,34 @@ TEST_CASE("without a route the path follows the road straight on") {
     CHECK_FALSE(p.onRoute);
     CHECK(p.path.points().back().pos.y == Approx(0.0));
 }
+
+TEST_CASE("the in-game GPS route steers A* onto its branch") {
+    // Two ways from `start` to `goal`: straight on (200 m) or a detour north (~360 m).
+    RoadNetwork net;
+    const auto start = net.add(lane({0, 0}, {100, 0}, 1));
+    const auto direct = net.add(lane({100, 0}, {300, 0}, 2));
+    const auto detourA = net.add(lane({100, 0}, {200, 150}, 3));
+    const auto detourB = net.add(lane({200, 150}, {300, 0}, 4));
+    const auto goal = net.add(lane({300, 0}, {400, 0}, 5));
+    auto& s = net.mutableSegments();
+    s[start].next = {direct, detourA};
+    s[direct].next = {goal};
+    s[detourA].next = {detourB};
+    s[detourB].next = {goal};
+    net.finalize();
+
+    const Route shortest = planRoute(net, start, 10.0, {goal});
+    REQUIRE(shortest.found);
+    CHECK(shortest.find(direct) >= 0);
+
+    // The GPS goes the long way round; its nodes sit on the road centre line.
+    RouteOptions opts;
+    opts.corridor = std::make_shared<const GpsCorridor>(
+        std::vector<Vec2>{{0, 2}, {100, 2}, {150, 77}, {200, 152}, {250, 77}, {300, 2}, {400, 2}});
+    CHECK(opts.corridor->distanceTo({0, 0}) == Approx(2.0));
+    CHECK(opts.corridor->distanceTo({200, 0}) > 30.0);
+    const Route gps = planRoute(net, start, 10.0, {goal}, opts);
+    REQUIRE(gps.found);
+    CHECK(gps.find(detourA) >= 0);
+    CHECK(gps.find(direct) < 0);
+}
