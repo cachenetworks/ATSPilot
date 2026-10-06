@@ -10,6 +10,9 @@
 #include "common/scssdk_telemetry_common_configs.h"
 #include "common/scssdk_telemetry_common_gameplay_events.h"
 #include "common/scssdk_telemetry_truck_common_channels.h"
+#include "eurotrucks2/scssdk_eut2.h"
+#include "eurotrucks2/scssdk_telemetry_eut2.h"
+#include "game/Game.h"
 #include "scssdk_telemetry.h"
 
 using namespace atspilot;
@@ -249,15 +252,25 @@ extern "C" SCSAPI_RESULT scs_telemetry_init(const scs_u32_t version, const scs_t
     const auto* p = static_cast<const scs_telemetry_init_params_v100_t*>(params);
     try {
         Runtime& rt = Runtime::acquire(p->common.log);
-        if (std::strcmp(p->common.game_id, SCS_GAME_ID_ATS) != 0) {
-            rt.log().warn("Game '{}' is not ATS; ATSPilot's map support targets ATS", p->common.game_name);
+        const std::string gameId = p->common.game_id ? p->common.game_id : "";
+        const GameKind gameKind = gameKindFromId(gameId);
+        if (gameKind == GameKind::Unknown) {
+            rt.log().error("Unsupported SCS game id '{}'", gameId);
+            Runtime::release();
+            return SCS_RESULT_unsupported;
         }
         rt.log().info("Telemetry API {}.{} on {} (game telemetry version {}.{})", SCS_GET_MAJOR_VERSION(version),
                       SCS_GET_MINOR_VERSION(version), p->common.game_name,
                       SCS_GET_MAJOR_VERSION(p->common.game_version), SCS_GET_MINOR_VERSION(p->common.game_version));
-        rt.setGameName(p->common.game_name ? p->common.game_name : "");
-        if (SCS_GET_MAJOR_VERSION(p->common.game_version) != SCS_GET_MAJOR_VERSION(SCS_TELEMETRY_ATS_GAME_VERSION_CURRENT)) {
-            rt.log().warn("Unexpected ATS telemetry major version; values may be misinterpreted");
+        rt.setGameIdentity(gameId, p->common.game_name ? p->common.game_name : "");
+        const scs_u32_t expectedGameVersion = gameKind == GameKind::Ats
+                                                  ? SCS_TELEMETRY_ATS_GAME_VERSION_CURRENT
+                                                  : SCS_TELEMETRY_EUT2_GAME_VERSION_CURRENT;
+        if (p->common.game_version != expectedGameVersion) {
+            rt.log().warn("Unexpected {} telemetry version {}.{} (SDK headers expect {}.{})",
+                          gameDefinition(gameKind).displayName, SCS_GET_MAJOR_VERSION(p->common.game_version),
+                          SCS_GET_MINOR_VERSION(p->common.game_version), SCS_GET_MAJOR_VERSION(expectedGameVersion),
+                          SCS_GET_MINOR_VERSION(expectedGameVersion));
         }
         g_registerChannel = p->register_for_channel;
         const scs_event_t events[] = {SCS_TELEMETRY_EVENT_frame_start, SCS_TELEMETRY_EVENT_frame_end,

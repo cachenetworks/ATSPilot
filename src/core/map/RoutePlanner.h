@@ -25,6 +25,7 @@ struct RouteService {
 struct Route {
     bool found = false;
     std::vector<RouteStep> steps;
+    double startS = 0.0;        // longitudinal position where this route was calculated
     double length = 0.0;       // metres along lanes, excluding lane-change penalties
     std::size_t expanded = 0;  // search effort, for diagnostics
     std::string failure;
@@ -34,6 +35,12 @@ struct Route {
     // Index of `segment` in steps at or after `from`, or -1.
     int find(std::uint32_t segment, int from = 0) const;
 };
+
+// A lane change needs enough road to establish the manoeuvre, blend across the
+// lane boundary and settle before the source segment ends. Routes that discover
+// a change later than this should miss the turn and recalculate instead of
+// forcing a sideways correction beside the truck.
+inline constexpr double kMinLaneChangeRoom = 80.0;
 
 // The in-game GPS route as a polyline (plan coordinates, truck to destination),
 // with a grid index for distance queries.

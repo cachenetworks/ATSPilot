@@ -83,6 +83,12 @@ std::string mapFingerprint(const MapBuildOptions& options);
 
 std::vector<std::filesystem::path> gameArchives(const std::filesystem::path& gameDir);
 
+// Closes small geometry seams after lane links are known. Regular road/prefab
+// joins are snapped as before; one-to-one road/template joins with the same lane
+// count meet at a shared midpoint so a road-look offset change is not interpreted
+// as a lane change by the path planner.
+void normalizeLaneJoins(std::vector<LaneSegment>& segments, double joinTolerance = 1.6);
+
 // Parses road looks, prefab descriptors and every sector of the map into a
 // lane graph. Expensive (tens of seconds); run off the game thread.
 std::optional<RoadNetwork> buildRoadNetwork(const MapBuildOptions& options, MapBuildStats& stats, Logger* log);

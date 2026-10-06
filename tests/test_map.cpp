@@ -10,6 +10,7 @@
 #include "map/CityHash.h"
 #include "map/HashFs.h"
 #include "map/LanePlanner.h"
+#include "map/MapBuilder.h"
 #include "map/PrefabDescription.h"
 #include "map/RoadNetwork.h"
 #include "map/SectorParser.h"
@@ -32,6 +33,70 @@ LaneSegment straightLane(Vec2 from, Vec2 to, double spacing = 5.0) {
         s.points.push_back({static_cast<float>(p.x), static_cast<float>(p.y), 0.0f});
     }
     return s;
+}
+
+TEST_CASE("same-width road template seams are normalized without a lane-change jog") {
+    std::vector<LaneSegment> segs;
+    auto road = [](Vec2 from, Vec2 to, std::uint64_t item, std::uint8_t lane) {
+        LaneSegment s = straightLane(from, to);
+        s.itemUid = item;
+        s.laneIndex = lane;
+        return s;
+    };
+
+    segs.push_back(road({0, 0}, {100, 0}, 1, 0));
+    segs.push_back(road({0, -4.5}, {100, -4.5}, 1, 1));
+    segs.push_back(road({100, -4.5}, {200, -4.5}, 2, 0));
+    segs.push_back(road({100, -9.0}, {200, -9.0}, 2, 1));
+    // Geometric merge linking can collapse both source lanes into the nearest
+    // target lane when the next road look is shifted sideways.
+    segs[0].next = {2};
+    segs[1].next = {2};
+
+    normalizeLaneJoins(segs);
+
+    CHECK(distance(segs[0].points.back().plan(), segs[2].points.front().plan()) < 0.01);
+    CHECK(distance(segs[1].points.back().plan(), segs[3].points.front().plan()) < 0.01);
+    REQUIRE(segs[0].next.size() == 1);
+    REQUIRE(segs[1].next.size() == 1);
+    CHECK(segs[0].next.front() == 2);
+    CHECK(segs[1].next.front() == 3);
+    CHECK(segs[0].points.back().y == Approx(-2.25).epsilon(0.01));
+    CHECK(segs[2].points.front().y == Approx(-2.25).epsilon(0.01));
+}
+
+TEST_CASE("lane-count changes keep their lateral merge geometry") {
+    std::vector<LaneSegment> segs;
+    auto a0 = straightLane({0, 0}, {100, 0});
+    a0.itemUid = 1;
+    a0.laneIndex = 0;
+    auto a1 = straightLane({0, -4.5}, {100, -4.5});
+    a1.itemUid = 1;
+    a1.laneIndex = 1;
+    auto b0 = straightLane({100, -4.5}, {200, -4.5});
+    b0.itemUid = 2;
+    b0.laneIndex = 0;
+    a0.next = {2};
+    segs = {a0, a1, b0};
+
+    normalizeLaneJoins(segs);
+
+    CHECK(distance(segs[0].points.back().plan(), segs[2].points.front().plan()) == Approx(4.5).epsilon(0.01));
+}
+
+TEST_CASE("regular road to prefab joins still snap to authored prefab geometry") {
+    std::vector<LaneSegment> segs;
+    auto road = straightLane({0, 0}, {100, 0});
+    road.itemUid = 1;
+    auto prefab = straightLane({100, 1.2}, {150, 1.2});
+    prefab.itemUid = 2;
+    prefab.kind = LaneKind::Prefab;
+    road.next = {1};
+    segs = {road, prefab};
+
+    normalizeLaneJoins(segs);
+
+    CHECK(distance(segs[0].points.back().plan(), segs[1].points.front().plan()) < 0.01);
 }
 
 template <typename T>

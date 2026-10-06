@@ -1,6 +1,7 @@
 add_executable(atspilot_tests
   main.cpp
   test_map.cpp
+  test_game.cpp
   test_math.cpp
   test_path.cpp
   test_route.cpp

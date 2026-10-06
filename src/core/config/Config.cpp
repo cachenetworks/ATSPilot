@@ -272,8 +272,8 @@ ConfigLoadResult loadConfig(const std::string& text) {
 
 std::string defaultConfigText() {
     return R"(# ATSPilot configuration
-# Edit while the game is closed, or run "sdk reinit" in the ATS console to reload.
-# Invalid values never stop ATS from loading: they fall back to defaults and are
+# Edit while the game is closed, or run "sdk reinit" in the game console to reload.
+# Invalid values never stop the game from loading: they fall back to defaults and are
 # reported in atspilot.log.
 
 [autopilot]
@@ -284,7 +284,7 @@ enabled = true
 # control +/- keys; braking, steering or the throttle take over at any time.
 # Key names: F1-F24, A-Z, 0-9, Insert, Delete, Home, End, PageUp, PageDown,
 # Up, Down, Left, Right, Minus, Equals, Backspace, Pause, Num0-Num9, NumPlus,
-# NumMinus. Modifiers: Shift+, Ctrl+, Alt+. Read only while ATS has focus.
+# NumMinus. Modifiers: Shift+, Ctrl+, Alt+. Read only while the game has focus.
 toggle = "F9"
 
 [profile]

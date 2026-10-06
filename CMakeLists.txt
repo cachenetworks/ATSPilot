@@ -8,7 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 option(ATSPILOT_BUILD_TESTS "Build unit and controller tests" ON)
-option(ATSPILOT_BUILD_PLUGIN "Build the ATS plugin DLL (Windows x64 only)" ON)
+option(ATSPILOT_BUILD_PLUGIN "Build the ATS/ETS2 plugin DLL (Windows x64 only)" ON)
 option(ATSPILOT_BUILD_TOOLS "Build the simulator and map tools" ON)
 
 if(MSVC)

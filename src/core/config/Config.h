@@ -28,7 +28,7 @@ struct SteeringConfig {
     SteeringShaperParams shaper;
     double initialMaxWheelAngleDeg = 35.0;
     bool learnSteeringRatio = true;
-    // semantical.steering is subtracted in ATS's `steering` mix (controls.sii),
+    // semantical.steering is subtracted in the game's `steering` mix (controls.sii),
     // so a positive (left) command must be sent as a negative value.
     double outputSign = -1.0;
 };

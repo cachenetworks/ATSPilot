@@ -29,8 +29,8 @@ public:
     GameMemory(Logger& log, const GameMemoryConfig& cfg);
     ~GameMemory();
 
-    // Checks the game version and starts the background pattern scan.
-    void start(const std::string& gameName);
+    // Checks the executable version and starts the background pattern scan.
+    void start(const std::string& gameVersion);
 
     bool ready() const { return state_.load() == State::Ready; }
     bool steeringAvailable() const { return ready() && cfg_.steering && steeringOk_; }

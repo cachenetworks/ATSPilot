@@ -19,10 +19,13 @@ void MapService::setConfig(const Config& cfg) {
     cfg_ = cfg;
 }
 
-void MapService::start(const std::filesystem::path& gameDir, const std::filesystem::path& cacheDir) {
+void MapService::start(const std::filesystem::path& gameDir, const std::filesystem::path& cacheDir, std::string mapName,
+                       std::string cacheFile) {
     stop();
     gameDir_ = gameDir;
     cacheDir_ = cacheDir;
+    mapName_ = std::move(mapName);
+    cacheFile_ = std::move(cacheFile);
     stop_ = false;
     state_ = MapState::Loading;
     thread_ = std::thread([this] { run(); });
@@ -73,6 +76,7 @@ bool MapService::loadOrBuild() {
     }
     MapBuildOptions opts;
     opts.gameDir = gameDir_;
+    opts.mapName = mapName_;
     opts.laneWidth = cfg.map.laneWidth;
     opts.cancel = &stop_;
     opts.progress = [this](double p, const std::string& phase) {
@@ -81,7 +85,7 @@ bool MapService::loadOrBuild() {
         statusText_ = phase;
     };
     const std::string fingerprint = mapFingerprint(opts);
-    const auto cacheFile = cacheDir_ / "map_usa.cache";
+    const auto cacheFile = cacheDir_ / cacheFile_;
 
     std::string why;
     if (auto cached = RoadNetwork::load(cacheFile, fingerprint, &why)) {

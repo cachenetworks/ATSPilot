@@ -1,6 +1,7 @@
 # ATSPilot
 
-ATSPilot is a self-driving plugin for **American Truck Simulator**. It runs
+ATSPilot is a self-driving plugin for **American Truck Simulator** and
+**Euro Truck Simulator 2**. It runs
 inside the game as a native SCS SDK plugin. It finds the truck on a lane-level
 road graph parsed from the game's own map files and drives the in-game GPS route
 to the job's depot. It follows traffic, obeys traffic lights and gives way at
@@ -8,7 +9,7 @@ junctions. Speed is held with the **game's own cruise control**. Everything is
 controlled with **one key**.
 
 > **Status: pre-alpha (v0.3.0).** The driving logic is tested in a simulator and
-> with the real plugin DLL on real ATS map data. The game-memory features
+> with the real plugin DLL on real ATS and ETS2 map data. The game-memory features
 > (direct steering, traffic, light states, GPS route) are new and **not yet
 > validated in game**. Test on quiet roads and keep your hands near the controls.
 
@@ -62,7 +63,7 @@ own steering.
   window, because the SDK has no UI extension, so exclusive fullscreen may hide
   it. `status.json` carries the same data.
 - `.zip` map mods are not read. Base game and installed DLC are.
-- **Refuelling only at drive-through stations.** Most ATS fuel stations are
+- **Refuelling only at drive-through stations.** Many fuel stations are
   open lots whose pumps no mapped lane reaches (about 190 of 4000 pumps are
   reachable). When none is near, ATSPilot says so in the log and keeps driving;
   refuel yourself. Whether holding "activate" refuels, and where exactly to
@@ -70,21 +71,24 @@ own steering.
 - **Weigh stations are always entered** when one is beside the route, open or
   not: the open/closed state is not read.
 
-## Supported ATS version
+## Supported game versions
 
-Built against **SCS SDK 1.15** (telemetry 1.07, input 1.00, ATS 1.61+). The map
-parser targets sector format **907** and prefab format **25**; the game-memory
-layer targets **1.61**. Other versions are rejected cleanly with a log message
+Built against **SCS SDK 1.15**: ATS telemetry **1.07**, ETS2 telemetry **1.20**,
+and input **1.00** for both games. The map parser is validated against ATS
+**1.61.3.1** and ETS2 **1.61.1.1**, using sector format **907** and prefab format
+**25**. The game-memory layer targets **1.61.x**. Other memory layouts are
+rejected cleanly with a log message
 rather than misread.
 
 ## Installation
 
 1. Download a release, or build from source (see [Development](#development)).
-2. Run `install.ps1` from the release folder. It finds ATS through Steam and
-   copies `plugins\atspilot.dll` to `...\American Truck Simulator\bin\win_x64\plugins\`.
-3. Start ATS and accept the "advanced SDK features" prompt.
+2. Run `install.ps1` from the release folder. It finds ATS and ETS2 through
+   Steam and installs into every detected supported game. Use `-Game ATS` or
+   `-Game ETS2` to install only one.
+3. Start the game and accept the "advanced SDK features" prompt.
 4. On the first start the map is parsed in the background (about 20 s) and
-   cached in `Documents\American Truck Simulator\atspilot\cache\`.
+   cached under that game's `Documents\...\atspilot\cache\` folder.
 
 No mod and no controls changes are needed. The plugin's input device feeds the
 game's existing steering, pedal, cruise-control, blinker and quick-park
@@ -103,12 +107,12 @@ controls.
 5. Press **F9** again, brake, or steer to take over.
 
 The key is configurable in `[controls] toggle`. F10 and F11 are avoided because
-ATS uses them.
+the SCS games use them.
 
 ## Configuration
 
-`Documents\American Truck Simulator\atspilot\atspilot.toml` is created with
-documented defaults on first start:
+`Documents\American Truck Simulator\atspilot\atspilot.toml` or
+`Documents\Euro Truck Simulator 2\atspilot\atspilot.toml` is created with documented defaults on first start:
 
 - `[controls]`: the single key
 - `[profile]`
@@ -124,7 +128,7 @@ documented defaults on first start:
 - `[hud]`, `[map]`, `[audio]`, `[debug]`
 
 Invalid values are clamped or replaced by defaults and listed in the log. Run
-`sdk reinit` in the ATS console to reload.
+`sdk reinit` in the game console to reload.
 
 ## Safety and disengagement
 
@@ -160,7 +164,7 @@ Requirements: Windows x64, Visual Studio 2022/2026 (or Build Tools) with C++.
 CMake comes with Visual Studio; zlib and doctest are fetched automatically.
 
 ```powershell
-./build.ps1          # build, 112 unit/controller tests, simulator, package build/release/ATSPilot
+./build.ps1          # build, tests, simulator, package build/release/ATSPilot
 ./build.ps1 -Zip
 ```
 

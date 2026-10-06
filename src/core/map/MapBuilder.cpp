@@ -1,10 +1,12 @@
 #include "map/MapBuilder.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <memory>
 #include <sstream>
+#include <tuple>
 #include <unordered_map>
 
 #include "map/BinaryReader.h"
@@ -200,6 +202,180 @@ double segmentEndYaw(const LaneSegment& s) {
 }
 
 }  // namespace
+
+void normalizeLaneJoins(std::vector<LaneSegment>& segs, double joinTolerance) {
+    std::vector<std::vector<std::uint32_t>> preds(segs.size());
+    for (std::uint32_t id = 0; id < segs.size(); ++id) {
+        for (auto n : segs[id].next) {
+            if (n < segs.size()) preds[n].push_back(id);
+        }
+    }
+
+    std::unordered_map<std::uint64_t, std::array<std::vector<std::uint32_t>, 2>> roadLanes;
+    for (std::uint32_t id = 0; id < segs.size(); ++id) {
+        const auto& seg = segs[id];
+        if (seg.kind != LaneKind::Road) continue;
+        roadLanes[seg.itemUid][seg.leftSide ? 1 : 0].push_back(id);
+    }
+
+    std::vector<Vec2> startShift(segs.size());
+    std::vector<Vec2> endShift(segs.size());
+
+    // Preserve the existing road/prefab snapping for small authored-geometry
+    // residuals. Calculate all shifts before mutating any lane so one correction
+    // cannot influence another.
+    for (std::uint32_t id = 0; id < segs.size(); ++id) {
+        const auto& seg = segs[id];
+        if (seg.kind != LaneKind::Road || seg.points.size() < 2) continue;
+        for (auto p : preds[id]) {
+            if (segs[p].points.empty()) continue;
+            const Vec2 shift = segs[p].points.back().plan() - seg.points.front().plan();
+            if (segs[p].kind == LaneKind::Prefab && shift.length() <= joinTolerance) {
+                startShift[id] = shift;
+                break;
+            }
+        }
+        for (auto n : seg.next) {
+            if (n >= segs.size() || segs[n].points.empty()) continue;
+            const Vec2 shift = segs[n].points.front().plan() - seg.points.back().plan();
+            if (segs[n].kind == LaneKind::Prefab && shift.length() <= joinTolerance) {
+                endShift[id] = shift;
+                break;
+            }
+        }
+    }
+
+    // SCS road looks can move an otherwise identical carriageway several metres
+    // relative to the shared node line. The merge-link pass may then map two lanes
+    // into the same geometrically-nearest lane even though the two road items have
+    // matching logical lane indices. Detect these seams at road-item level, repair
+    // the lane links by lane index, then meet each corresponding lane halfway.
+    using RoadPair = std::tuple<std::uint64_t, std::uint64_t, bool>;
+    std::vector<RoadPair> candidatePairs;
+    for (std::uint32_t id = 0; id < segs.size(); ++id) {
+        const auto& from = segs[id];
+        if (from.kind != LaneKind::Road) continue;
+        for (auto nextId : from.next) {
+            if (nextId >= segs.size()) continue;
+            const auto& to = segs[nextId];
+            if (to.kind != LaneKind::Road || to.itemUid == from.itemUid || to.leftSide != from.leftSide) continue;
+            candidatePairs.emplace_back(from.itemUid, to.itemUid, from.leftSide);
+        }
+    }
+    std::sort(candidatePairs.begin(), candidatePairs.end());
+    candidatePairs.erase(std::unique(candidatePairs.begin(), candidatePairs.end()), candidatePairs.end());
+
+    auto connectedRoadItems = [&](std::uint64_t item, bool leftSide, bool incoming) {
+        std::vector<std::uint64_t> items;
+        const auto it = roadLanes.find(item);
+        if (it == roadLanes.end()) return items;
+        for (auto id : it->second[leftSide ? 1 : 0]) {
+            const auto& links = incoming ? preds[id] : segs[id].next;
+            for (auto otherId : links) {
+                if (otherId >= segs.size()) continue;
+                const auto& other = segs[otherId];
+                if (other.kind != LaneKind::Road || other.itemUid == item || other.leftSide != leftSide) continue;
+                items.push_back(other.itemUid);
+            }
+        }
+        std::sort(items.begin(), items.end());
+        items.erase(std::unique(items.begin(), items.end()), items.end());
+        return items;
+    };
+
+    for (const auto& [fromItem, toItem, leftSide] : candidatePairs) {
+        const auto fromIt = roadLanes.find(fromItem);
+        const auto toIt = roadLanes.find(toItem);
+        if (fromIt == roadLanes.end() || toIt == roadLanes.end()) continue;
+        const auto& fromLanes = fromIt->second[leftSide ? 1 : 0];
+        const auto& toLanes = toIt->second[leftSide ? 1 : 0];
+        if (fromLanes.empty() || fromLanes.size() != toLanes.size()) continue;
+
+        const auto outgoing = connectedRoadItems(fromItem, leftSide, false);
+        const auto incoming = connectedRoadItems(toItem, leftSide, true);
+        if (outgoing.size() != 1 || outgoing.front() != toItem || incoming.size() != 1 || incoming.front() != fromItem) {
+            continue;
+        }
+
+        std::array<int, 256> fromByLane;
+        std::array<int, 256> toByLane;
+        fromByLane.fill(-1);
+        toByLane.fill(-1);
+        for (auto id : fromLanes) fromByLane[segs[id].laneIndex] = static_cast<int>(id);
+        for (auto id : toLanes) toByLane[segs[id].laneIndex] = static_cast<int>(id);
+
+        bool valid = true;
+        bool haveGap = false;
+        Vec2 referenceGap;
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> lanePairs;
+        lanePairs.reserve(fromLanes.size());
+        for (std::size_t lane = 0; lane < fromByLane.size(); ++lane) {
+            if (fromByLane[lane] < 0 && toByLane[lane] < 0) continue;
+            if (fromByLane[lane] < 0 || toByLane[lane] < 0) {
+                valid = false;
+                break;
+            }
+            const auto fromId = static_cast<std::uint32_t>(fromByLane[lane]);
+            const auto toId = static_cast<std::uint32_t>(toByLane[lane]);
+            const auto& from = segs[fromId];
+            const auto& to = segs[toId];
+            if (from.points.size() < 2 || to.points.size() < 2 ||
+                std::abs(headingDifference(segmentEndYaw(from), segmentStartYaw(to))) > degToRad(20.0)) {
+                valid = false;
+                break;
+            }
+
+            const Vec2 gap = to.points.front().plan() - from.points.back().plan();
+            const Vec2 dir = (from.points.back().plan() - from.points[from.points.size() - 2].plan()).normalized();
+            if (gap.length() > 6.0 || std::abs(dot(dir, gap)) > 1.5 || std::abs(cross(dir, gap)) <= joinTolerance) {
+                valid = false;
+                break;
+            }
+            if (!haveGap) {
+                referenceGap = gap;
+                haveGap = true;
+            } else if (distance(referenceGap, gap) > 0.75) {
+                valid = false;
+                break;
+            }
+            lanePairs.emplace_back(fromId, toId);
+        }
+        if (!valid || !haveGap || lanePairs.size() != fromLanes.size()) continue;
+
+        for (const auto& [fromId, toId] : lanePairs) {
+            auto& next = segs[fromId].next;
+            next.erase(std::remove_if(next.begin(), next.end(), [&](std::uint32_t id) {
+                           return id < segs.size() && segs[id].kind == LaneKind::Road && segs[id].itemUid == toItem &&
+                                  segs[id].leftSide == leftSide;
+                       }),
+                       next.end());
+            if (std::find(next.begin(), next.end(), toId) == next.end()) next.push_back(toId);
+
+            const Vec2 gap = segs[toId].points.front().plan() - segs[fromId].points.back().plan();
+            const Vec2 half = gap * 0.5;
+            endShift[fromId] = half;
+            startShift[toId] = -half;
+        }
+    }
+
+    for (std::uint32_t id = 0; id < segs.size(); ++id) {
+        auto& seg = segs[id];
+        if (seg.kind != LaneKind::Road || seg.points.size() < 2) continue;
+        if (startShift[id].lengthSq() < 1e-6 && endShift[id].lengthSq() < 1e-6) continue;
+
+        std::vector<double> along(seg.points.size(), 0.0);
+        for (std::size_t i = 1; i < seg.points.size(); ++i) {
+            along[i] = along[i - 1] + distance(seg.points[i - 1].plan(), seg.points[i].plan());
+        }
+        const double total = along.back();
+        for (std::size_t i = 0; i < seg.points.size(); ++i) {
+            const double t = total > 1e-6 ? clamp(along[i] / total, 0.0, 1.0) : 0.0;
+            const Vec2 shift = lerp(startShift[id], endShift[id], t);
+            seg.points[i].x += static_cast<float>(shift.x);
+            seg.points[i].y += static_cast<float>(shift.y);
+        }
+    }
+}
 
 std::vector<std::filesystem::path> gameArchives(const std::filesystem::path& gameDir) {
     std::vector<std::filesystem::path> out;
@@ -738,47 +914,7 @@ std::optional<RoadNetwork> buildRoadNetwork(const MapBuildOptions& options, MapB
     }
 
     report(options, 0.94, "Snapping lanes");
-    // Road lanes come from a lane-offset model while junction curves are authored
-    // geometry, so the residual gap at a join is closed by shifting the road lane's
-    // ends onto the junction curve, blending the correction along the road.
-    std::vector<std::vector<std::uint32_t>> preds(segs.size());
-    for (std::uint32_t id = 0; id < segs.size(); ++id) {
-        for (auto n : segs[id].next) preds[n].push_back(id);
-    }
-    for (std::uint32_t id = 0; id < segs.size(); ++id) {
-        auto& seg = segs[id];
-        if (seg.kind != LaneKind::Road || seg.points.size() < 2) continue;
-        Vec2 startShift, endShift;
-        // Only regular joins are snapped; merge and gap links are bridged by the path builder.
-        for (auto p : preds[id]) {
-            const Vec2 shift = segs[p].points.back().plan() - seg.points.front().plan();
-            if (segs[p].kind == LaneKind::Prefab && shift.length() <= kJoinTolerance) {
-                startShift = shift;
-                break;
-            }
-        }
-        for (auto n : seg.next) {
-            const Vec2 shift = segs[n].points.front().plan() - seg.points.back().plan();
-            if (segs[n].kind == LaneKind::Prefab && shift.length() <= kJoinTolerance) {
-                endShift = shift;
-                break;
-            }
-        }
-        if (startShift.lengthSq() < 1e-6 && endShift.lengthSq() < 1e-6) continue;
-        // Blend factors come from the unmodified geometry, so shifting a point can
-        // never feed back into the factor of the next one.
-        std::vector<double> along(seg.points.size(), 0.0);
-        for (std::size_t i = 1; i < seg.points.size(); ++i) {
-            along[i] = along[i - 1] + distance(seg.points[i - 1].plan(), seg.points[i].plan());
-        }
-        const double total = along.back();
-        for (std::size_t i = 0; i < seg.points.size(); ++i) {
-            const double t = total > 1e-6 ? clamp(along[i] / total, 0.0, 1.0) : 0.0;
-            const Vec2 shift = lerp(startShift, endShift, t);
-            seg.points[i].x += static_cast<float>(shift.x);
-            seg.points[i].y += static_cast<float>(shift.y);
-        }
-    }
+    normalizeLaneJoins(segs, kJoinTolerance);
 
     report(options, 0.96, "Resolving destinations");
     // Destinations: each company item with the lanes of its depot prefab.

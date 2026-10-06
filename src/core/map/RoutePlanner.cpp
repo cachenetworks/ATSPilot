@@ -54,6 +54,7 @@ int Route::find(std::uint32_t segment, int from) const {
 Route planRoute(const RoadNetwork& net, std::uint32_t startSegment, double startS,
                 const std::vector<std::uint32_t>& goals, const RouteOptions& options) {
     Route route;
+    route.startS = startS;
     if (goals.empty() || startSegment >= net.size()) {
         route.failure = "no destination lanes";
         return route;
@@ -138,8 +139,16 @@ Route planRoute(const RoadNetwork& net, std::uint32_t startSegment, double start
             return cost;
         };
         for (auto n : net.segment(id).next) relax(n, laneCost(n), false);
-        // A lane change keeps the position along the road, so it only costs the penalty.
-        for (auto n : net.laneNeighbors(id)) relax(n, options.laneChangeCost, true);
+        // A lane change keeps the position along the road, so it only costs the
+        // penalty. It still needs real longitudinal room to happen. Also do not
+        // stack lane-change edges at the same longitudinal position: moving two
+        // lanes over requires another road segment between the changes.
+        const double laneChangeRoom =
+            id == startSegment ? std::max(0.0, static_cast<double>(net.segment(id).length) - startS)
+                               : static_cast<double>(net.segment(id).length);
+        if (!viaLaneChange[id] && laneChangeRoom >= kMinLaneChangeRoom) {
+            for (auto n : net.laneNeighbors(id)) relax(n, options.laneChangeCost, true);
+        }
     }
 
     if (reached == kNone) {
@@ -189,6 +198,7 @@ Route planRouteMatching(const RoadNetwork& net, std::uint32_t startSegment, doub
             if (error < bestError) {
                 Route r;
                 r.found = true;
+                r.startS = startS;
                 r.steps.assign(shortest.steps.begin(), shortest.steps.begin() + static_cast<std::ptrdiff_t>(i) + 1);
                 r.steps.insert(r.steps.end(), tail.steps.begin(), tail.steps.end());
                 r.length = total;

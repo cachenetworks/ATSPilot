@@ -93,18 +93,19 @@ build\cmake\src\tools\Release\atspilot_sim.exe --config x.toml --csv out
 ## Map validation
 
 ```powershell
-atspilot_mapdump build "<ATS dir>" map.cache     # statistics, gap histograms, per-look diagnostics
+atspilot_mapdump build "<ATS or ETS2 dir>" map.cache     # statistics, gap histograms, per-look diagnostics
 atspilot_mapdump locate map.cache <x> <z>        # lanes near a world position, e.g. from a telemetry CSV
 atspilot_mapdump ls "<ATS dir>\base_map.scs" map/usa
+atspilot_mapdump ls "<ETS2 dir>\base_map.scs" map/europe
 ```
 
 ## Plugin host (end-to-end without the game)
 
 ```powershell
-atspilot_plugin_host <atspilot.dll> "<ATS dir>" map.cache [scenarios] [seconds] [speedup] [nav_seconds]
+atspilot_plugin_host <atspilot.dll> "<game dir>" map.cache [scenarios] [seconds] [speedup] [nav_seconds] [ats|ets2]
 ```
 
-The host loads the real DLL and calls its exports exactly as ATS would:
+The host loads the real DLL and calls its exports with the same SCS SDK contracts used by ATS and ETS2:
 
 - version negotiation
 - event and channel registration
@@ -115,8 +116,12 @@ Its simulated truck drives on lanes picked at random from the real map. The
 host engages the autopilot through the development export and measures lane
 deviation with an independent localizer.
 
-Latest run (ATS 1.61 map, 8 scenarios × 90 s at 4× speed): **8/8 stayed
+Latest extended run (ATS 1.61 map, 8 scenarios × 90 s at 4× speed): **8/8 stayed
 engaged, about 15 km driven, RMS lane deviation 0.02–0.06 m.**
+
+Dual-game smoke validation on 2026-10-05 also built fresh ATS 1.61.3.1 and
+ETS2 1.61.1.1 map caches with zero sector parse errors, then ran the real DLL
+through one simulated road scenario in each game identity. Both stayed engaged.
 
 With `nav_seconds`, the host also sends a job configuration event. The
 destination is a real depot 2.5–8 km away. The host then checks that the
@@ -143,7 +148,7 @@ lookahead cuts corners by 1–2 m (see control-system.md).
 
 The simulator and host cannot validate:
 
-- ATS vehicle dynamics: tyre slip, trailer articulation, real steering ratio and
+- Real game vehicle dynamics: tyre slip, trailer articulation, real steering ratio and
   lag, engine and gearbox response
 - the semantical mixing assumptions in sdk.md
 - whether `truck.input.*` includes the device contribution
@@ -151,7 +156,7 @@ The simulator and host cannot validate:
 
 In-game checklist:
 
-1. ATS loads, the log shows "Input device registered" and "Map loaded".
+1. ATS or ETS2 loads, the log shows "Input device registered" and "Map loaded".
 2. Cruise mode on a straight road: speed holds within ±2 mph and brakes on downhill.
 3. Lane assist on a highway: no "Steering direction mismatch". The learned
    `max_wheel_angle` appears in recordings.

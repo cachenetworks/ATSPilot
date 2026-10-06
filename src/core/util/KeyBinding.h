@@ -6,7 +6,7 @@
 namespace atspilot {
 
 // A keyboard shortcut using Windows virtual-key codes. Modifiers must match
-// exactly, so "F9" does not fire while ATS's own Ctrl+F9 is pressed.
+// exactly, so "F9" does not fire while the game's own Ctrl+F9 is pressed.
 struct KeyBinding {
     int virtualKey = 0;
     bool shift = false;

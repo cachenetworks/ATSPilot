@@ -15,6 +15,7 @@
 #include "GameMemory.h"
 #include "Hud.h"
 #include "config/Config.h"
+#include "game/Game.h"
 #include "map/MapService.h"
 #include "pilot/Autopilot.h"
 #include "util/KeyBinding.h"
@@ -26,7 +27,7 @@
 namespace atspilot::plugin {
 
 struct Paths {
-    std::filesystem::path dataDir;   // Documents/American Truck Simulator/atspilot
+    std::filesystem::path dataDir;   // Documents/<current game>/atspilot
     std::filesystem::path configFile;
     std::filesystem::path logFile;
     std::filesystem::path cacheDir;
@@ -66,9 +67,9 @@ public:
     void onTruckConfiguration();
     void onGameplayEvent(const std::string& id);
     void setTelemetryActive(bool active);
-    // The game's name and version from the telemetry API; starts the game-memory
-    // features when the version is supported.
-    void setGameName(const std::string& name);
+    // Confirms the SCS game reported by telemetry and starts version-gated
+    // game-memory features.
+    void setGameIdentity(const std::string& id, const std::string& name);
     void onWheelSteering(unsigned index, float rotations);
 
     // --- Input side (main thread) ---
@@ -109,6 +110,7 @@ private:
     static int refs_;
 
     scs_log_t gameLog_ = nullptr;
+    GameKind gameKind_ = GameKind::Unknown;
     Paths paths_;
     Config config_;
     Logger log_;

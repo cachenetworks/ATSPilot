@@ -10,7 +10,7 @@
 namespace atspilot::sim {
 
 // Kinematic bicycle model with actuator lag and simple longitudinal dynamics.
-// Development aid only: it validates controller logic, not ATS physics.
+// Development aid only: it validates controller logic, not in-game vehicle physics.
 struct SimParams {
     double wheelbase = 6.0;
     double frontAxleZ = -1.0;

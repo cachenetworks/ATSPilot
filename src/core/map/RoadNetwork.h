@@ -88,7 +88,7 @@ struct NodePoint {
 // Lane-level road graph for the whole map with a uniform-grid spatial index.
 class RoadNetwork {
 public:
-    static constexpr std::uint32_t kFormatVersion = 6;
+    static constexpr std::uint32_t kFormatVersion = 7;
 
     std::uint32_t add(LaneSegment seg);
     void finalize();  // builds the spatial index and predecessor lists

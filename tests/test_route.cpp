@@ -124,6 +124,54 @@ TEST_CASE("route-following path blends across the lane change and announces it")
     CHECK(p.routeRemaining > 200.0);
 }
 
+TEST_CASE("a stale route never forces a lane change after the truck has missed its safe window") {
+    Grid g;
+    // The route was calculated while there was plenty of room to move right.
+    const Route r = planRoute(g.net, g.inner, 20.0, {g.depot});
+    REQUIRE(r.found);
+    REQUIRE(r.steps.size() >= 2);
+    REQUIRE(r.steps[1].laneChange);
+
+    // The truck is now near the end of the source lane and is still centred in
+    // it. Reusing the old route must continue straight instead of drawing an
+    // immediate path across the adjacent lane and into the exit wall.
+    LaneMatch m;
+    m.segment = g.inner;
+    m.s = 170.0;
+    m.yaw = 0.0;
+    m.crossTrack = 0.0;
+    PathBuildParams pp;
+    pp.ahead = 500.0;
+    const PlannedPath p = buildPlannedPath(g.net, m, pp, {}, &r);
+    CHECK_FALSE(p.onRoute);
+    REQUIRE(p.path.valid());
+    CHECK(p.path.positionAt(p.truckS).y == Approx(0.0).epsilon(0.05));
+    for (const auto& pt : p.path.points()) CHECK(std::abs(pt.pos.y) < 0.1);
+    CHECK(p.path.points().back().pos.x > 600.0);
+}
+
+TEST_CASE("route search refuses a lane change discovered too late") {
+    Grid g;
+    const Route r = planRoute(g.net, g.inner, 170.0, {g.depot});
+    CHECK_FALSE(r.found);
+    CHECK_FALSE(r.failure.empty());
+}
+
+TEST_CASE("route search does not stack two lane changes at one longitudinal position") {
+    RoadNetwork net;
+    const auto inner = net.add(lane({0, 0}, {200, 0}, 1, 0));
+    const auto middle = net.add(lane({0, -4.5}, {200, -4.5}, 1, 1));
+    const auto outer = net.add(lane({0, -9.0}, {200, -9.0}, 1, 2));
+    const auto exit = net.add(lane({200, -9.0}, {300, -80.0}, 2, 0));
+    auto& s = net.mutableSegments();
+    s[outer].next = {exit};
+    net.finalize();
+
+    const Route r = planRoute(net, inner, 0.0, {exit});
+    CHECK_FALSE(r.found);
+    CHECK_FALSE(r.failure.empty());
+}
+
 TEST_CASE("without a route the path follows the road straight on") {
     Grid g;
     LaneMatch m;

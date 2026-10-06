@@ -148,6 +148,9 @@ void Autopilot::engage(const VehicleState& s) {
     cruise_ = GameCruiseManager(eff_.ingame.cruise);
     override_.reset(clamp(s.inputSteering, -1.0, 1.0));
     invertedSteeringFrames_ = 0;
+    divergenceSince_ = -1.0;
+    divergenceStartError_ = 0.0;
+    divergencePeakError_ = 0.0;
     hintPath_.reset();
     waitingStop_.reset();
     tapStart_ = -1.0;
@@ -167,6 +170,9 @@ void Autopilot::disengage(const std::string& reason, PilotEvent evt) {
     mode_ = PilotMode::Off;
     last_ = ControlCommand{};
     hintPath_.reset();
+    divergenceSince_ = -1.0;
+    divergenceStartError_ = 0.0;
+    divergencePeakError_ = 0.0;
     waitingStop_.reset();
     ourLeftBlinker_ = ourRightBlinker_ = false;
     setMessage(reason);
@@ -262,8 +268,13 @@ void Autopilot::serviceStop(const PathStop& stop, const VehicleState& s, const V
     const double waited = s.time - serviceSince_;
 
     if (stop.kind == StopKind::Weigh) {
-        // Weighing is automatic once stopped on the scale; the station's light
-        // shows when to leave. Without a readable light, a short pause.
+        // Settle on the scale, then press the game's semantic Activate control
+        // once (Enter by default). Holding/spamming it can immediately dismiss
+        // another prompt, so keep this as one short pulse per visit.
+        activate_ = waited >= 0.35 && waited < 0.70;
+
+        // The station's light shows when to leave. Without a readable light,
+        // give the weighing UI enough time to complete after the activation.
         bool red = false;
         if (world_ && world_->valid) {
             const Vec2 front = path.positionAt(std::clamp(frontS, 0.0, path.length()));
@@ -278,21 +289,35 @@ void Autopilot::serviceStop(const PathStop& stop, const VehicleState& s, const V
         if ((waited > 5.0 && !red) || waited > 45.0) {
             clearStop(stop.segment);
             serviceSince_ = -1.0;
+            activate_ = false;
             if (log_) log_->info("Weigh station: done after {:.0f} s{}", waited, red ? " (light still red)" : "");
             setMessage("Weigh station done");
         }
         return;
     }
 
-    // Fuel: hold the game's "activate" control while the tank fills.
-    activate_ = true;
+    const bool full = vc.fuelCapacity > 1.0 && s.fuel >= 0.98 * vc.fuelCapacity;
+    if (full && !refuelling_) {
+        clearStop(stop.segment);
+        serviceSince_ = -1.0;
+        activate_ = false;
+        if (log_) log_->info("Fuel stop skipped: tank already full ({:.0f} of {:.0f} litres)", s.fuel, vc.fuelCapacity);
+        setMessage("Fuel tank full");
+        return;
+    }
+
+    // Fuel pumps need Activate held, but first use a short probe after the truck
+    // has settled. Once fuel is actually rising, keep holding until refuelling
+    // finishes. This avoids holding Enter forever when the tank is misaligned.
+    const bool activationProbe = waited >= 0.35 && waited < 1.60;
+    activate_ = refuelling_ || activationProbe;
     if (s.fuel >= 0.0 && s.fuel > fuelBest_ + 0.3) {
         fuelBest_ = s.fuel;
         fuelLastRise_ = s.time;
         if (!refuelling_ && log_) log_->info("Refuelling started");
         refuelling_ = true;
+        activate_ = true;
     }
-    const bool full = vc.fuelCapacity > 1.0 && s.fuel >= 0.98 * vc.fuelCapacity;
     if (refuelling_ && (full || s.time - fuelLastRise_ > 4.0)) {
         clearStop(stop.segment);
         serviceSince_ = -1.0;
@@ -301,12 +326,13 @@ void Autopilot::serviceStop(const PathStop& stop, const VehicleState& s, const V
             log_->info("Refuelled: {:.0f} of {:.0f} litres", s.fuel, vc.fuelCapacity);
         }
         setMessage("Refuelled");
-    } else if (!refuelling_ && waited > 6.0) {
+    } else if (!refuelling_ && waited > 4.0) {
         activate_ = false;
         serviceSince_ = -1.0;
         if (++fuelTries_ <= 3) {
-            serviceNudge_ += 4.0;
-            if (log_) log_->info("No fuel flowing yet; moving forward 4 m to try again");
+            const double step = fuelTries_ < 3 ? 1.5 : 2.0;
+            serviceNudge_ += step;
+            if (log_) log_->info("No fuel flowing yet; moving forward {:.1f} m to align with the pump", step);
         } else {
             clearStop(stop.segment);
             if (log_) log_->warn("Refuelling did not start at this pump; refuel manually or let ATSPilot try another");
@@ -647,10 +673,41 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
             enterEmergency("Dangerous path deviation");
         } else if (std::abs(lat->headingError) > degToRad(eff_.safety.maxHeadingErrorDeg)) {
             enterEmergency("Heading deviates from path");
-        } else if (joinAllowance_ <= 0.0 && std::abs(lat->crossTrackError) > eff_.safety.warnCrossTrack &&
-                   s.time - lastCrossTrackWarn_ > 5.0) {
-            lastCrossTrackWarn_ = s.time;
-            if (log_) log_->warn("Cross-track error {:.2f} m", lat->crossTrackError);
+        } else {
+            const double error = std::abs(lat->crossTrackError);
+            if (joinAllowance_ <= 0.0 && error > eff_.safety.warnCrossTrack) {
+                if (divergenceSince_ < 0.0) {
+                    divergenceSince_ = s.time;
+                    divergenceStartError_ = error;
+                    divergencePeakError_ = error;
+                } else if (error < divergencePeakError_ - 0.25) {
+                    // Meaningful recovery: start a fresh observation window rather
+                    // than treating an old peak as a continuing divergence.
+                    divergenceSince_ = s.time;
+                    divergenceStartError_ = error;
+                    divergencePeakError_ = error;
+                } else {
+                    divergencePeakError_ = std::max(divergencePeakError_, error);
+                }
+
+                // A truck steadily walking away from the lane can hit a barrier
+                // before the absolute 3 m path-loss limit. Stop earlier once the
+                // trend is sustained and materially worse than the warning point.
+                if (s.time - divergenceSince_ >= 1.25 && error >= eff_.safety.warnCrossTrack + 0.45 &&
+                    error >= divergenceStartError_ + 0.35 && error >= divergencePeakError_ - 0.15) {
+                    enterEmergency("Cross-track error diverging");
+                }
+            } else {
+                divergenceSince_ = -1.0;
+                divergenceStartError_ = 0.0;
+                divergencePeakError_ = 0.0;
+            }
+
+            if (mode_ == PilotMode::Autopilot && joinAllowance_ <= 0.0 && error > eff_.safety.warnCrossTrack &&
+                s.time - lastCrossTrackWarn_ > 5.0) {
+                lastCrossTrackWarn_ = s.time;
+                if (log_) log_->warn("Cross-track error {:.2f} m", lat->crossTrackError);
+            }
         }
     }
 

@@ -38,7 +38,8 @@ public:
     MapService(const MapService&) = delete;
     MapService& operator=(const MapService&) = delete;
 
-    void start(const std::filesystem::path& gameDir, const std::filesystem::path& cacheDir);
+    void start(const std::filesystem::path& gameDir, const std::filesystem::path& cacheDir, std::string mapName = "usa",
+               std::string cacheFile = "map_usa.cache");
     void stop();
     void setConfig(const Config& cfg);
 
@@ -73,6 +74,8 @@ private:
 
     std::filesystem::path gameDir_;
     std::filesystem::path cacheDir_;
+    std::string mapName_ = "usa";
+    std::string cacheFile_ = "map_usa.cache";
     std::unique_ptr<RoadNetwork> net_;
 
     std::thread thread_;

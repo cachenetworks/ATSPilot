@@ -29,7 +29,7 @@ struct VehicleState {
     double effectiveBrake = 0.0;
     double steerableWheelAngle = 0.0;  // radians, mean of steerable wheels, left positive
 
-    double cruiseControlSpeed = 0.0;   // ATS's own cruise control, m/s, 0 = off
+    double cruiseControlSpeed = 0.0;   // the game's own cruise control, m/s, 0 = off
     int gear = 0;
     int displayedGear = 0;
     bool parkingBrake = false;

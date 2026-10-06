@@ -198,6 +198,49 @@ TEST_CASE("stale path triggers a controlled emergency stop that ends in neutral"
     CHECK(maxBrake <= Config{}.cruise.emergencyBrake + 1e-9);
 }
 
+TEST_CASE("sustained growing cross-track error stops before the hard path-loss limit") {
+    Config cfg;
+    cfg.ingame.useCruiseControl = false;
+    Rig rig(cfg);
+    rig.pilot.setDirectSteering(true);
+    rig.toggle();
+    REQUIRE((rig.pilot.mode() == PilotMode::Autopilot));
+
+    double errorAtEmergency = 0.0;
+    for (int k = 0; k < 180 && rig.pilot.mode() == PilotMode::Autopilot; ++k) {
+        rig.t += 1.0 / 60.0;
+        VehicleState s = rig.state();
+        s.time = rig.t;
+        const double error = 1.25 + 0.55 * rig.t;
+        s.worldPosition.z -= error;  // plan-space +y offset from the straight path
+        rig.pilot.update(s, rig.vehicle.config(), rig.path, rig.t, rig.t, rig.t);
+        if (rig.pilot.mode() == PilotMode::EmergencyStop) errorAtEmergency = error;
+    }
+
+    CHECK((rig.pilot.mode() == PilotMode::EmergencyStop));
+    CHECK(errorAtEmergency > cfg.safety.warnCrossTrack);
+    CHECK(errorAtEmergency < cfg.safety.maxCrossTrack);
+    CHECK(rig.pilot.status().statusMessage == "Emergency Stop: Cross-track error diverging");
+}
+
+TEST_CASE("a stable warning-level cross-track offset does not trigger divergence braking") {
+    Config cfg;
+    cfg.ingame.useCruiseControl = false;
+    Rig rig(cfg);
+    rig.pilot.setDirectSteering(true);
+    rig.toggle();
+
+    for (int k = 0; k < 180; ++k) {
+        rig.t += 1.0 / 60.0;
+        VehicleState s = rig.state();
+        s.time = rig.t;
+        s.worldPosition.z -= 1.35;
+        rig.pilot.update(s, rig.vehicle.config(), rig.path, rig.t, rig.t, rig.t);
+    }
+
+    CHECK((rig.pilot.mode() == PilotMode::Autopilot));
+}
+
 TEST_CASE("driver braking disengages autopilot") {
     Rig rig;
     rig.toggle();

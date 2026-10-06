@@ -1,5 +1,5 @@
 // Development-only exports used by tools/plugin_host to drive the real plugin
-// DLL without the game. ATS only calls the scs_* exports and ignores these.
+// DLL without the game. ATS and ETS2 only call the scs_* exports and ignore these.
 
 #include <cstring>
 #include <string>

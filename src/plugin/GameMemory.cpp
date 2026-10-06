@@ -25,6 +25,10 @@
 #include "prism/traffic/game_traffic.hpp"
 #include "prism/traffic/objects/traffic_ai_vehicle.hpp"
 #include "prism/traffic/objects/traffic_light.hpp"
+#include "prism/traffic/objects/traffic_parked_actor.hpp"
+#include "prism/traffic/objects/traffic_parked_trailer.hpp"
+#include "prism/traffic/objects/traffic_player_trailer.hpp"
+#include "prism/traffic/objects/traffic_player_vehicle.hpp"
 #include "prism/traffic/objects/traffic_semaphore_actor.hpp"
 #include "prism/vehicles/game_physics_vehicle.hpp"
 #include "prism/vehicles/vehicle_shared.hpp"
@@ -125,15 +129,136 @@ void addVehicle(const prism::traffic_ai_vehicle_t* veh, const Vec2& truck, doubl
     for (int k = 0; body != nullptr && k < 5; ++k, body = body->slave) addBody(body, id, speed, truck, radius, out);
 }
 
+void addPlayerVehicle(const prism::traffic_player_vehicle_t* veh, const Vec2& truck, double radius,
+                      std::unordered_set<const void*>& seen, std::vector<WorldVehicle>& out) {
+    if (veh == nullptr || !seen.insert(veh).second) return;
+    const int id = static_cast<int>((reinterpret_cast<std::uintptr_t>(veh) >> 4) & 0x7FFFFFFF);
+    const double speed = std::isfinite(veh->speed) ? std::max(0.0, static_cast<double>(veh->speed)) : 0.0;
+    const prism::traffic_actor_t* explicitTrailer = static_cast<const prism::traffic_actor_t*>(veh->trailer);
+    const prism::traffic_actor_t* body = veh;
+    bool trailerInChain = false;
+    for (int k = 0; body != nullptr && k < 6; ++k, body = body->slave) {
+        if (body == explicitTrailer) trailerInChain = true;
+        addBody(body, id, speed, truck, radius, out);
+    }
+
+    // Convoy trailers are also exposed directly from the player vehicle. Some
+    // game builds link them anywhere in actor::slave as well, so only add the
+    // explicit trailer when the primary actor chain did not already include it.
+    if (explicitTrailer != nullptr && !trailerInChain) {
+        body = explicitTrailer;
+        for (int k = 0; body != nullptr && k < 5; ++k, body = body->slave) addBody(body, id, speed, truck, radius, out);
+    }
+}
+
+void addParkedActor(const prism::traffic_actor_t* actor, const Vec2& truck, double radius,
+                    std::unordered_set<const void*>& seen, std::vector<WorldVehicle>& out) {
+    if (actor == nullptr || !seen.insert(actor).second) return;
+    const int id = static_cast<int>((reinterpret_cast<std::uintptr_t>(actor) >> 4) & 0x7FFFFFFF);
+    const prism::traffic_actor_t* body = actor;
+    for (int k = 0; body != nullptr && k < 6; ++k, body = body->slave) addBody(body, id, 0.0, truck, radius, out);
+}
+
+void addTrafficObject(const prism::traffic_object_t* obj, const Vec2& truck, double radius,
+                      std::unordered_set<const void*>& seen, std::vector<WorldVehicle>& out) {
+    if (obj == nullptr) return;
+    switch (obj->get_type()) {
+        case prism::ETrafficObjectType::traffic_ai_vehicle:
+            addVehicle(static_cast<const prism::traffic_ai_vehicle_t*>(obj), truck, radius, seen, out);
+            break;
+        case prism::ETrafficObjectType::traffic_player_vehicle:
+            addPlayerVehicle(static_cast<const prism::traffic_player_vehicle_t*>(obj), truck, radius, seen, out);
+            break;
+        case prism::ETrafficObjectType::traffic_parked_vehicle:
+            // Random-road-event vehicles use the actor-backed parked layout.
+            addParkedActor(static_cast<const prism::traffic_parked_actor_t*>(obj), truck, radius, seen, out);
+            break;
+        case prism::ETrafficObjectType::traffic_parked_trailer: {
+            const auto* trailer = static_cast<const prism::traffic_parked_trailer_t*>(obj);
+            addParkedActor(static_cast<const prism::traffic_parked_actor_t*>(trailer), truck, radius, seen, out);
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+struct TrafficPoolStats {
+    std::uint64_t size = 0;
+    std::uint64_t ai = 0;
+    std::uint64_t player = 0;
+    std::uint64_t parked = 0;
+    std::uint64_t parkedTrailer = 0;
+    std::uint64_t semaphore = 0;
+    std::uint64_t roadBlock = 0;
+    std::uint64_t roadworkLight = 0;
+    std::uint64_t other = 0;
+    std::uint64_t firstOther = 0;
+};
+
+TrafficPoolStats trafficPoolStats(const prism::array_dyn_t<prism::traffic_object_t*>& pool) {
+    TrafficPoolStats stats;
+    stats.size = pool.size;
+    for (std::uint64_t i = 0; i < pool.size; ++i) {
+        auto* obj = pool.value[i];
+        if (obj == nullptr) continue;
+        const auto type = obj->get_type();
+        switch (type) {
+            case prism::ETrafficObjectType::traffic_ai_vehicle: ++stats.ai; break;
+            case prism::ETrafficObjectType::traffic_player_vehicle: ++stats.player; break;
+            case prism::ETrafficObjectType::traffic_parked_vehicle: ++stats.parked; break;
+            case prism::ETrafficObjectType::traffic_parked_trailer: ++stats.parkedTrailer; break;
+            case prism::ETrafficObjectType::traffic_semaphore_actor: ++stats.semaphore; break;
+            case prism::ETrafficObjectType::road_block: ++stats.roadBlock; break;
+            case prism::ETrafficObjectType::traffic_light_roadwork: ++stats.roadworkLight; break;
+            default:
+                ++stats.other;
+                if (stats.firstOther == 0) stats.firstOther = static_cast<std::uint64_t>(type);
+                break;
+        }
+    }
+    return stats;
+}
+
 void collectTraffic(const Vec2& truck, double radius, std::vector<WorldVehicle>& out) {
     auto* traffic = prism::game_traffic_u::get();
     if (traffic == nullptr) return;
     std::unordered_set<const void*> seen;
     for (auto& sv : traffic->spawned_vehicles_1) addVehicle(sv.vehicle, truck, radius, seen, out);
     for (auto& sv : traffic->spawned_vehicles_2) addVehicle(sv.vehicle, truck, radius, seen, out);
-    for (auto* obj : traffic->traffic_objects_1) {
-        if (obj == nullptr || obj->get_type() != prism::ETrafficObjectType::traffic_ai_vehicle) continue;
-        addVehicle(reinterpret_cast<const prism::traffic_ai_vehicle_t*>(obj), truck, radius, seen, out);
+    for (auto* veh : traffic->traffic_player_vehicles_1) addPlayerVehicle(veh, truck, radius, seen, out);
+    for (auto* veh : traffic->traffic_player_vehicles_2) addPlayerVehicle(veh, truck, radius, seen, out);
+    for (auto* obj : traffic->traffic_objects_1) addTrafficObject(obj, truck, radius, seen, out);
+    // SCS keeps additional traffic-object pools after the primary actor list.
+    // Random road events can live in these pools, so consume only the object
+    // types whose actor layouts are known and leave rule-only objects untouched.
+    for (auto* obj : traffic->traffic_objects_2) addTrafficObject(obj, truck, radius, seen, out);
+    for (auto* obj : traffic->traffic_objects_3) addTrafficObject(obj, truck, radius, seen, out);
+
+    // Keep enough live evidence to identify roadwork rule/object placement if
+    // the actor-backed blockers still are not sufficient. Rate-limit this to
+    // avoid turning the normal driving log into a frame-by-frame trace.
+    static ULONGLONG lastPoolLog = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (g_log != nullptr && now - lastPoolLog >= 5000) {
+        const auto p1 = trafficPoolStats(traffic->traffic_objects_1);
+        const auto p2 = trafficPoolStats(traffic->traffic_objects_2);
+        const auto p3 = trafficPoolStats(traffic->traffic_objects_3);
+        const bool interesting = p2.size != 0 || p3.size != 0 || p1.parked != 0 || p1.parkedTrailer != 0 ||
+                                 p1.roadBlock != 0 || p1.roadworkLight != 0;
+        if (interesting) {
+            g_log->info(
+                "Game memory traffic pools: o1={} ai={} player={} parked={}/{} sem={} block={} roadwork={} other={} first=0x{:x}; "
+                "o2={} ai={} player={} parked={}/{} sem={} block={} roadwork={} other={} first=0x{:x}; "
+                "o3={} ai={} player={} parked={}/{} sem={} block={} roadwork={} other={} first=0x{:x}",
+                p1.size, p1.ai, p1.player, p1.parked, p1.parkedTrailer, p1.semaphore, p1.roadBlock,
+                p1.roadworkLight, p1.other, p1.firstOther,
+                p2.size, p2.ai, p2.player, p2.parked, p2.parkedTrailer, p2.semaphore, p2.roadBlock,
+                p2.roadworkLight, p2.other, p2.firstOther,
+                p3.size, p3.ai, p3.player, p3.parked, p3.parkedTrailer, p3.semaphore, p3.roadBlock,
+                p3.roadworkLight, p3.other, p3.firstOther);
+        }
+        lastPoolLog = now;
     }
 }
 
@@ -155,7 +280,12 @@ void collectLights(const Vec2& truck, double radius, std::vector<WorldLight>& ou
             if (actor == nullptr || actor->get_type() != prism::ETrafficObjectType::traffic_semaphore_actor) continue;
             const auto* sem = static_cast<const prism::traffic_semaphore_actor_t*>(actor);
             const auto* rule = sem->traffic_rule;
-            if (rule == nullptr || rule->get_type() != prism::ETrafficObjectType::traffic_light) continue;
+            if (rule == nullptr) continue;
+            const auto ruleType = rule->get_type();
+            if (ruleType != prism::ETrafficObjectType::traffic_light &&
+                ruleType != prism::ETrafficObjectType::traffic_light_roadwork) {
+                continue;
+            }
             WorldLight l;
             l.semaphoreId = static_cast<int>(inst.id);
             l.position = planOf(sem->placement.to_global_position());
@@ -215,16 +345,22 @@ GameMemory::~GameMemory() {
     g_log = nullptr;
 }
 
-void GameMemory::start(const std::string& gameName) {
+void GameMemory::start(const std::string& gameVersion) {
     if (state_.load() != State::Idle) return;
     if (!cfg_.enabled) {
         state_ = State::Unavailable;
         return;
     }
-    if (gameName.find(kSupportedVersion) == std::string::npos) {
+    if (gameVersion.empty()) {
+        state_ = State::Unavailable;
+        log_.warn("Game memory features need game version {}x, but the executable version could not be read; driving on map data only",
+                  kSupportedVersion);
+        return;
+    }
+    if (gameVersion.find(kSupportedVersion) == std::string::npos) {
         state_ = State::Unavailable;
         log_.warn("Game memory features need game version {}x, found '{}'; driving on map data only",
-                  kSupportedVersion, gameName);
+                  kSupportedVersion, gameVersion);
         return;
     }
     state_ = State::Scanning;

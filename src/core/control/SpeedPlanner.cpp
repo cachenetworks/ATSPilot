@@ -1,11 +1,35 @@
 #include "control/SpeedPlanner.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
 #include "math/MathUtil.h"
 
 namespace atspilot {
+
+namespace {
+
+// Map joins and sparse polyline vertices can create a one-sample curvature
+// spike. Requiring the bend to persist into one neighbouring sample keeps the
+// planner conservative for real curves while avoiding a hard brake for a
+// single bad vertex.
+double sustainedCurvature(const Path& path, double s, double span, double spacing) {
+    const double probe = std::max(1.0, spacing);
+    const double k = std::abs(path.curvatureAt(s, span));
+    const bool havePrev = s - probe >= 0.0;
+    const bool haveNext = s + probe <= path.length();
+    if (!havePrev && !haveNext) return k;
+    if (!havePrev) return std::min(k, std::abs(path.curvatureAt(s + probe, span)));
+    if (!haveNext) return std::min(k, std::abs(path.curvatureAt(s - probe, span)));
+
+    const double a = std::abs(path.curvatureAt(s - probe, span));
+    const double b = k;
+    const double c = std::abs(path.curvatureAt(s + probe, span));
+    return a + b + c - std::min({a, b, c}) - std::max({a, b, c});
+}
+
+}  // namespace
 
 double effectiveLateralAccel(const SpeedPlannerParams& p, const VehicleLoadFactors& f) {
     double a = p.maxLateralAccel * clamp(f.aggressiveness, 0.5, 1.5);
@@ -38,9 +62,10 @@ SpeedPlan planSpeed(const SpeedPlannerParams& p, const VehicleLoadFactors& f, co
     const double end = std::min(path.length(), currentS + p.horizon);
     double minK = 0.0;
 
-    for (double s = currentS; s <= end; s += p.sampleSpacing) {
-        const double k = path.curvatureAt(s, p.curvatureSpan);
-        minK = std::max(minK, std::abs(k));
+    const double spacing = std::max(1.0, p.sampleSpacing);
+    for (double s = currentS; s <= end; s += spacing) {
+        const double k = sustainedCurvature(path, s, p.curvatureSpan, spacing);
+        minK = std::max(minK, k);
         double vLimit = curveSpeed(k, aLat, p.minCurveSpeed);
         const double posted = path.speedLimitAt(s);
         if (posted > 0.0) vLimit = std::min(vLimit, posted);
@@ -50,7 +75,7 @@ SpeedPlan planSpeed(const SpeedPlannerParams& p, const VehicleLoadFactors& f, co
         if (allowed < plan.targetSpeed) {
             plan.targetSpeed = allowed;
             plan.limitingDistance = d;
-            plan.limitingCurveRadius = std::abs(k) > 1e-6 ? 1.0 / std::abs(k) : 0.0;
+            plan.limitingCurveRadius = k > 1e-6 ? 1.0 / k : 0.0;
         }
     }
 

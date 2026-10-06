@@ -1,11 +1,11 @@
 // Plugin host: loads the real atspilot.dll and plays the game's side of the SCS
 // SDK (telemetry events/channels and the input device), with the kinematic
-// simulator driving on real ATS road geometry from the map cache. It exercises
-// the whole in-game chain except ATS's own vehicle physics:
+// simulator driving on real ATS/ETS2 road geometry from the map cache. It exercises
+// the whole in-game chain except the game's own vehicle physics:
 //
 //   simulated truck ─▶ SDK telemetry callbacks ─▶ ATSPilot ─▶ semantical input ─▶ simulated truck
 //
-//   atspilot_plugin_host <atspilot.dll> <game_dir> <map.cache> [scenarios] [seconds] [speedup]
+//   atspilot_plugin_host <atspilot.dll> <game_dir> <map.cache> [scenarios] [seconds] [speedup] [nav_seconds] [ats|ets2]
 
 #include <windows.h>
 
@@ -36,6 +36,10 @@
 #include "amtrucks/scssdk_ats.h"
 #include "amtrucks/scssdk_telemetry_ats.h"
 #include "amtrucks/scssdk_input_ats.h"
+#include "eurotrucks2/scssdk_eut2.h"
+#include "eurotrucks2/scssdk_telemetry_eut2.h"
+#include "eurotrucks2/scssdk_input_eut2.h"
+#include "game/Game.h"
 
 using namespace atspilot;
 
@@ -75,7 +79,7 @@ SCSAPI_RESULT unregChannel(const scs_string_t name, const scs_u32_t index, const
     return SCS_RESULT_ok;
 }
 SCSAPI_RESULT regDevice(const scs_input_device_t* const d) {
-    // ATS 1.61 rejects the whole device ("invalid display_name of input N") when a
+    // SCS 1.61 rejects the whole device ("invalid display_name of input N") when a
     // display name holds anything but letters, digits and spaces.
     for (scs_u32_t i = 0; i < d->input_count; ++i) {
         for (const char* c = d->inputs[i].display_name; c && *c; ++c) {
@@ -299,7 +303,7 @@ std::vector<std::uint32_t> pickStarts(const RoadNetwork& net, int count, std::ui
 
 int main(int argc, char** argv) {
     if (argc < 4) {
-        std::fprintf(stderr, "usage: atspilot_plugin_host <atspilot.dll> <game_dir> <map.cache> [scenarios] [seconds] [speedup] [nav_seconds]\n");
+        std::fprintf(stderr, "usage: atspilot_plugin_host <atspilot.dll> <game_dir> <map.cache> [scenarios] [seconds] [speedup] [nav_seconds] [ats|ets2]\n");
         return 2;
     }
     const std::filesystem::path dllPath = std::filesystem::absolute(argv[1]);
@@ -309,6 +313,12 @@ int main(int argc, char** argv) {
     const double seconds = argc > 5 ? std::atof(argv[5]) : 90.0;
     const double speedup = argc > 6 ? std::atof(argv[6]) : 4.0;
     const double navSeconds = argc > 7 ? std::atof(argv[7]) : 0.0;
+    GameKind gameKind = argc > 8 ? gameKindFromSelector(argv[8]) : gameKindFromDirectory(gameDir);
+    if (gameKind == GameKind::Unknown) {
+        std::fprintf(stderr, "cannot determine game from '%s'; pass final argument ats or ets2\n", gameDir.c_str());
+        return 2;
+    }
+    const auto& game = gameDefinition(gameKind);
 
     const auto net = loadCache(cacheFile);
     if (!net) {
@@ -317,9 +327,9 @@ int main(int argc, char** argv) {
     }
 
     // Isolated data directory with a config pointing at the game data.
-    const auto dataDir = std::filesystem::temp_directory_path() / "atspilot_plugin_host";
+    const auto dataDir = std::filesystem::temp_directory_path() / (std::string("atspilot_plugin_host_") + game.selector);
     std::filesystem::create_directories(dataDir / "cache");
-    std::filesystem::copy_file(cacheFile, dataDir / "cache" / "map_usa.cache",
+    std::filesystem::copy_file(cacheFile, dataDir / "cache" / game.cacheFile,
                                std::filesystem::copy_options::overwrite_existing);
     {
         std::string gd = gameDir;
@@ -329,6 +339,7 @@ int main(int argc, char** argv) {
             << "record_telemetry = true\n";
     }
     SetEnvironmentVariableW(L"ATSPILOT_DATA_DIR", dataDir.wstring().c_str());
+    SetEnvironmentVariableA("ATSPILOT_GAME", game.selector);
 
     HMODULE dll = LoadLibraryW(dllPath.wstring().c_str());
     if (!dll) {
@@ -349,9 +360,10 @@ int main(int argc, char** argv) {
     }
 
     scs_telemetry_init_params_v101_t tp{};
-    tp.common.game_name = "American Truck Simulator";
-    tp.common.game_id = SCS_GAME_ID_ATS;
-    tp.common.game_version = SCS_TELEMETRY_ATS_GAME_VERSION_CURRENT;
+    tp.common.game_name = game.displayName;
+    tp.common.game_id = gameKind == GameKind::Ats ? SCS_GAME_ID_ATS : SCS_GAME_ID_EUT2;
+    tp.common.game_version = gameKind == GameKind::Ats ? SCS_TELEMETRY_ATS_GAME_VERSION_CURRENT
+                                                       : SCS_TELEMETRY_EUT2_GAME_VERSION_CURRENT;
     tp.common.log = hostLog;
     tp.register_for_event = regEvent;
     tp.unregister_from_event = unregEvent;
@@ -364,7 +376,8 @@ int main(int argc, char** argv) {
     }
     scs_input_init_params_v100_t ip{};
     ip.common = tp.common;
-    ip.common.game_version = SCS_INPUT_ATS_GAME_VERSION_CURRENT;
+    ip.common.game_version = gameKind == GameKind::Ats ? SCS_INPUT_ATS_GAME_VERSION_CURRENT
+                                                       : SCS_INPUT_EUT2_GAME_VERSION_CURRENT;
     ip.register_device = regDevice;
     if (inInit(SCS_INPUT_VERSION_1_00, &ip) != SCS_RESULT_ok) {
         std::fprintf(stderr, "input init failed\n");

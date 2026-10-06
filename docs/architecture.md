@@ -19,12 +19,12 @@ ATSPilot/
 
 Version-dependent code is confined to the plugin's SDK files, which check API
 versions, and to the map parsers, which check `.base`/`.ppd` versions. The
-control algorithms know nothing about ATS versions.
+control algorithms know nothing about game versions.
 
 ## Data flow
 
 ```
-                    ATS main thread                                   background threads
+                  game main thread                                   background threads
  ┌──────────────────────────────────────────────────────┐   ┌──────────────────────────────────┐
  │ telemetry channels ─▶ pending VehicleState            │   │ MapService                        │
  │ frame_end:                                            │   │  load cache / build map (once)    │

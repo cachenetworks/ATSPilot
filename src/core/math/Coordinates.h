@@ -1,6 +1,6 @@
 #pragma once
 
-// ATS world coordinate conventions (see docs/sdk.md, "Coordinate systems").
+// SCS truck-sim world coordinate conventions (see docs/sdk.md, "Coordinate systems").
 //
 //   World axes:  +X = east, +Y = up, +Z = south. Units are metres.
 //   SDK heading: unit range [0, 1), counterclockwise seen from above,
@@ -18,7 +18,7 @@
 // counterclockwise, so yaw = h * 2pi + pi/2.
 //
 // Keeping every inversion in this file means controllers never need to know
-// that ATS uses a left-handed-looking top-down view.
+// that the games use a left-handed-looking top-down view.
 
 #include "math/MathUtil.h"
 #include "math/Vec.h"

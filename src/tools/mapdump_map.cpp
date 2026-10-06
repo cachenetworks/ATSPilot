@@ -11,6 +11,7 @@
 #include <unordered_map>
 
 #include "control/SpeedPlanner.h"
+#include "game/Game.h"
 #include "map/HashFs.h"
 #include "map/LanePlanner.h"
 #include "map/MapBuilder.h"
@@ -29,6 +30,9 @@ namespace {
 int build(int argc, char** argv) {
     MapBuildOptions o;
     o.gameDir = argv[2];
+    if (const GameKind game = gameKindFromDirectory(o.gameDir); game != GameKind::Unknown) {
+        o.mapName = gameDefinition(game).mapName;
+    }
     const std::string cache = argc > 3 ? argv[3] : "atspilot_map.cache";
     double last = -1.0;
     std::string lastPhase;
@@ -356,10 +360,10 @@ int route(int argc, char** argv) {
                 std::printf("  %7.0f m  %-5s %-11s for %.0f m\n", absStart, ind.side > 0 ? "left" : "right",
                             toString(ind.kind), ind.sEnd - ind.sStart);
             }
-            if (const char* at = std::getenv("ATSPILOT_DUMP_AT")) {
+            if (const char* dumpAt = std::getenv("ATSPILOT_DUMP_AT")) {
                 // Path points within 30 m of a route distance, with lateral offset from
                 // the chord, to see what a kink is made of.
-                const double target = std::atof(at) - offset + p.truckS;
+                const double target = std::atof(dumpAt) - offset + p.truckS;
                 if (target > p.truckS && target < p.truckS + 400.0) {
                     const Vec2 a = p.path.positionAt(target - 30.0), b = p.path.positionAt(target + 30.0);
                     const Vec2 d = (b - a).normalized();
@@ -524,6 +528,8 @@ int reach(int argc, char** argv) {
 int item(int argc, char** argv) {
     if (argc < 4) return 2;
     const std::uint64_t uid = std::stoull(argv[3], nullptr, 16);
+    const GameKind game = gameKindFromDirectory(argv[2]);
+    const std::string mapDir = "map/" + std::string(gameDefinition(game == GameKind::Unknown ? GameKind::Ats : game).mapName);
     GameFileSystem fs;
     for (const auto& a : gameArchives(argv[2])) {
         if (auto ar = HashFsArchive::open(a)) fs.add(std::move(ar));
@@ -531,9 +537,9 @@ int item(int argc, char** argv) {
     std::unordered_map<std::uint64_t, MapNode> nodes;
     std::unordered_map<std::uint64_t, MapRoad> roads;
     std::unordered_map<std::uint64_t, MapPrefab> prefabs;
-    for (const auto& f : fs.list("map/usa").files) {
+    for (const auto& f : fs.list(mapDir).files) {
         if (f.size() < 5 || f.substr(f.size() - 5) != ".base") continue;
-        const auto data = fs.read("map/usa/" + f);
+        const auto data = fs.read(mapDir + "/" + f);
         if (!data) continue;
         try {
             const SectorData s = parseSector(data->data(), data->size());

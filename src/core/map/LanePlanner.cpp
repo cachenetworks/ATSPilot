@@ -190,6 +190,34 @@ double smoothstep(double x) {
     return x * x * (3.0 - 2.0 * x);
 }
 
+struct LaneChangeWindow {
+    double start = 0.0;
+    double end = 0.0;
+};
+
+// Pick a stable longitudinal window for a route lane change. `earliest` is the
+// position where this route first entered the source lane (route.startS on the
+// first lane, zero later). Keeping this fixed stops the blend start from chasing
+// the truck forward every time the rolling path is rebuilt.
+std::optional<LaneChangeWindow> laneChangeWindow(const LaneSegment& from, const LaneSegment& to, double earliest) {
+    if (from.points.size() < 2 || from.points.size() != to.points.size()) return std::nullopt;
+    if (from.itemUid != to.itemUid || from.leftSide != to.leftSide) return std::nullopt;
+
+    const double length = static_cast<double>(from.length);
+    earliest = clamp(earliest, 0.0, length);
+    if (length - earliest < kMinLaneChangeRoom) return std::nullopt;
+
+    constexpr double kLead = 12.0;
+    constexpr double kEndMargin = 12.0;
+    constexpr double kMinBlend = 55.0;
+    constexpr double kMaxBlend = 120.0;
+    const double end = length - kEndMargin;
+    const double preferredBlend = clamp(length * 0.60, kMinBlend, kMaxBlend);
+    const double start = std::max(end - preferredBlend, earliest + kLead);
+    if (end - start < kMinBlend) return std::nullopt;
+    return LaneChangeWindow{start, end};
+}
+
 // Describes the route's choice at a branch relative to the straightest option.
 std::string maneuverFor(const RoadNetwork& net, std::uint32_t from, std::uint32_t chosen, double horizon) {
     const double turn = headingDifference(endYaw(net.segment(from)), headingInto(net, chosen, horizon));
@@ -257,47 +285,10 @@ PlannedPath buildPlannedPath(const RoadNetwork& net, const LaneMatch& start, con
 
     double ahead = net.segment(start.segment).length - start.s;
     bool reportedManeuver = false;
-    if (out.onRoute) {
-        // Follow the route; report the first step where it departs from "straight on".
-        double dist = ahead;
-        for (std::size_t i = static_cast<std::size_t>(routeIndex) + 1; i < route->steps.size(); ++i) {
-            const RouteStep& step = route->steps[i];
-            const std::uint32_t prevSeg = route->steps[i - 1].segment;
-            if (!reportedManeuver) {
-                if (step.laneChange) {
-                    const auto& a = net.segment(prevSeg);
-                    const auto& b = net.segment(step.segment);
-                    const Vec2 dir = (a.points.back().plan() - a.points.front().plan()).normalized();
-                    const bool left = cross(dir, b.points.front().plan() - a.points.front().plan()) > 0.0;
-                    out.nextManeuver = left ? "Change Lane Left" : "Change Lane Right";
-                    out.nextManeuverDistance = std::max(0.0, dist - net.segment(prevSeg).length);
-                    reportedManeuver = true;
-                } else if (net.segment(prevSeg).next.size() > 1 &&
-                           chooseSuccessor(net, prevSeg, {}, params.choiceHorizon) != step.segment) {
-                    out.nextManeuver = maneuverFor(net, prevSeg, step.segment, params.choiceHorizon);
-                    out.nextManeuverDistance = dist;
-                    reportedManeuver = true;
-                }
-            }
-            if (dist < params.ahead) {
-                out.chain.push_back(step.segment);
-                laneChange.push_back(step.laneChange);
-            }
-            if (!step.laneChange) dist += net.segment(step.segment).length;
-            if (reportedManeuver && dist >= params.ahead) break;
-            if (dist > 30000.0) break;
-        }
-        out.routeRemaining = net.segment(start.segment).length - start.s;
-        for (std::size_t i = static_cast<std::size_t>(routeIndex) + 1; i < route->steps.size(); ++i) {
-            if (!route->steps[i].laneChange) out.routeRemaining += net.segment(route->steps[i].segment).length;
-        }
-        if (!reportedManeuver) {
-            out.nextManeuver = "Arrive";
-            out.nextManeuverDistance = dist;
-        }
-    } else {
-        // No route: at every branch continue on the straightest successor.
-        cur = start.segment;
+
+    auto followRoad = [&](std::uint32_t first, double distanceAhead) {
+        cur = first;
+        ahead = distanceAhead;
         while (ahead < params.ahead && out.chain.size() < 400) {
             const auto& next = net.segment(cur).next;
             if (next.empty()) {
@@ -322,6 +313,86 @@ PlannedPath buildPlannedPath(const RoadNetwork& net, const LaneMatch& start, con
             ahead += net.segment(chosen).length;
             cur = chosen;
         }
+    };
+
+    if (out.onRoute) {
+        // Follow the route; report the first step where it departs from "straight on".
+        double dist = ahead;
+        bool blockedLaneChange = false;
+        for (std::size_t i = static_cast<std::size_t>(routeIndex) + 1; i < route->steps.size(); ++i) {
+            const RouteStep& step = route->steps[i];
+            const std::uint32_t prevSeg = route->steps[i - 1].segment;
+            if (step.laneChange && dist < params.ahead) {
+                const auto& from = net.segment(prevSeg);
+                const auto& to = net.segment(step.segment);
+                const double routeEntry = !route->steps.empty() && prevSeg == route->steps.front().segment ? route->startS : 0.0;
+                const auto window = laneChangeWindow(from, to, routeEntry);
+                bool missed = !window || route->steps[i - 1].laneChange;
+
+                // If the truck is still localized to the source lane after the
+                // fixed blend should be well underway, compare its actual lateral
+                // progress with the planned progress. A large lag means the lane
+                // change has effectively been missed; staying in-lane is safer.
+                if (!missed && prevSeg == start.segment && start.s > window->start) {
+                    const Vec2 sourceAt = pointAlong(from, start.s);
+                    const Vec2 targetAt = pointAlong(to, start.s);
+                    const Vec2 dir{std::cos(start.yaw), std::sin(start.yaw)};
+                    const double offset = cross(dir, targetAt - sourceAt);
+                    if (std::abs(offset) > 1.0) {
+                        const double expected = smoothstep((start.s - window->start) / (window->end - window->start));
+                        const double actual = clamp(start.crossTrack / offset, 0.0, 1.0);
+                        if (expected > 0.55 && actual + 0.35 < expected) missed = true;
+                    }
+                }
+                if (missed) {
+                    blockedLaneChange = true;
+                    break;
+                }
+            }
+            if (!reportedManeuver) {
+                if (step.laneChange) {
+                    const auto& a = net.segment(prevSeg);
+                    const auto& b = net.segment(step.segment);
+                    const Vec2 dir = (a.points.back().plan() - a.points.front().plan()).normalized();
+                    const bool left = cross(dir, b.points.front().plan() - a.points.front().plan()) > 0.0;
+                    out.nextManeuver = left ? "Change Lane Left" : "Change Lane Right";
+                    out.nextManeuverDistance = std::max(0.0, dist - net.segment(prevSeg).length);
+                    reportedManeuver = true;
+                } else if (net.segment(prevSeg).next.size() > 1 &&
+                           chooseSuccessor(net, prevSeg, {}, params.choiceHorizon) != step.segment) {
+                    out.nextManeuver = maneuverFor(net, prevSeg, step.segment, params.choiceHorizon);
+                    out.nextManeuverDistance = dist;
+                    reportedManeuver = true;
+                }
+            }
+            if (dist < params.ahead) {
+                out.chain.push_back(step.segment);
+                laneChange.push_back(step.laneChange);
+            }
+            if (!step.laneChange) dist += net.segment(step.segment).length;
+            if (reportedManeuver && dist >= params.ahead) break;
+            if (dist > 30000.0) break;
+        }
+        if (blockedLaneChange) {
+            out.onRoute = false;
+            out.routeRemaining = 0.0;
+            reportedManeuver = false;
+            out.nextManeuver.clear();
+            out.nextManeuverDistance = 0.0;
+            followRoad(out.chain.back(), dist);
+        } else {
+            out.routeRemaining = net.segment(start.segment).length - start.s;
+            for (std::size_t i = static_cast<std::size_t>(routeIndex) + 1; i < route->steps.size(); ++i) {
+                if (!route->steps[i].laneChange) out.routeRemaining += net.segment(route->steps[i].segment).length;
+            }
+            if (!reportedManeuver) {
+                out.nextManeuver = "Arrive";
+                out.nextManeuverDistance = dist;
+            }
+        }
+    } else {
+        // No route: at every branch continue on the straightest successor.
+        followRoad(start.segment, ahead);
     }
 
     // Assemble the polyline. A lane change replaces the tail of the previous lane
@@ -344,12 +415,14 @@ PlannedPath buildPlannedPath(const RoadNetwork& net, const LaneMatch& start, con
         laneStartS[c] = arcLength();
         if (laneChange[c] && c > 0) {
             const auto& from = net.segment(out.chain[c - 1]);
-            if (from.points.size() == seg.points.size() && pts.size() >= from.points.size()) {
+            const double routeEntry = route && !route->steps.empty() && out.chain[c - 1] == route->steps.front().segment
+                                          ? route->startS
+                                          : 0.0;
+            const auto window = laneChangeWindow(from, seg, routeEntry);
+            if (window && pts.size() >= from.points.size()) {
                 const std::size_t base = pts.size() - from.points.size();
-                // Start blending at the truck if it is on the source lane, else at its start.
-                double startAlong = out.chain[c - 1] == start.segment ? start.s : 0.0;
-                const double remaining = std::max(1.0, from.length - startAlong);
-                const double blend = clamp(remaining * 0.8, 30.0, 150.0);
+                const double startAlong = window->start;
+                const double blend = window->end - window->start;
                 {
                     // Signal from shortly before the blend until the truck is in the new lane.
                     const Vec2 dir = (from.points.back().plan() - from.points.front().plan()).normalized();
@@ -358,19 +431,25 @@ PlannedPath buildPlannedPath(const RoadNetwork& net, const LaneMatch& start, con
                     ind.kind = IndicationKind::LaneChange;
                     ind.side = cross(dir, seg.points.front().plan() - from.points.front().plan()) > 0.0 ? 1 : -1;
                     ind.sStart = sBase + startAlong - ip.laneChangeLead;
-                    ind.sEnd = sBase + startAlong + std::min(blend, remaining);
+                    ind.sEnd = sBase + window->end;
                     out.indications.push_back(ind);
                 }
                 laneStartS[c] = laneStartS[c - 1];
                 double along = 0.0;
                 for (std::size_t j = 0; j < from.points.size(); ++j) {
                     if (j > 0) along += distance(from.points[j - 1].plan(), from.points[j].plan());
-                    const double w = smoothstep((along - startAlong) / std::min(blend, remaining));
+                    const double w = smoothstep((along - startAlong) / blend);
                     pts[base + j] = lerp(from.points[j].plan(), seg.points[j].plan(), w);
                     ids[base + j] = out.chain[c];
                 }
                 continue;  // the blended points already end on the target lane
             }
+            // Never turn an invalid lane-change edge into a raw sideways join.
+            out.onRoute = false;
+            out.routeRemaining = 0.0;
+            out.chain.resize(c);
+            laneChange.resize(c);
+            break;
         }
         if (out.chain[c] == start.segment) truckS = arcLength() + start.s;
         if (const std::uint8_t r = seg.rules; r & (LaneRule::Signal | LaneRule::Stop | LaneRule::Yield | LaneRule::RailCrossing)) {

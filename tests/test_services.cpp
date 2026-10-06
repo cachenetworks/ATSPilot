@@ -145,7 +145,7 @@ PathStop serviceStop(StopKind kind, double s) {
 
 }  // namespace
 
-TEST_CASE("at a fuel pump the autopilot stops, holds activate until the tank is full, and drives on") {
+TEST_CASE("at a fuel pump the autopilot probes activate, detects fuel flow, then holds until full") {
     StopRig rig(sim::makeStraight(2000.0));
     rig.vehicle.setFuel(60.0, 600.0);
     rig.snap->stops = {serviceStop(StopKind::Fuel, 300.0)};
@@ -172,7 +172,8 @@ TEST_CASE("when a pump gives no fuel the autopilot moves up, retries, then carri
     rig.snap->stops = {serviceStop(StopKind::Fuel, 300.0)};
     rig.engage();
     for (int k = 0; k < 60 * 150 && rig.frontX() < 340.0; ++k) rig.step();
-    CHECK(rig.vehicle.activateHeldTime() > 15.0);  // tried at several spots
+    CHECK(rig.vehicle.activateHeldTime() > 3.0);  // one bounded activation probe at each alignment
+    CHECK(rig.vehicle.activateHeldTime() < 8.0);  // never sits there holding Enter forever
     CHECK((rig.pilot.mode() == PilotMode::Autopilot));
     CHECK(rig.frontX() >= 340.0);
 }
@@ -182,11 +183,15 @@ TEST_CASE("at a weigh station the autopilot stops on the scale, waits, and drive
     rig.snap->stops = {serviceStop(StopKind::Weigh, 300.0)};
     rig.engage();
     double stoppedFor = 0.0;
+    double activateFor = 0.0;
     for (int k = 0; k < 60 * 90 && rig.frontX() < 340.0; ++k) {
-        rig.step();
+        const ControlCommand c = rig.step();
+        if (c.activate) activateFor += 1.0 / 60.0;
         if (rig.vehicle.speed() < 0.3 && rig.frontX() > 295.0) stoppedFor += 1.0 / 60.0;
     }
     CHECK(stoppedFor > 4.5);
+    CHECK(activateFor > 0.25);
+    CHECK(activateFor < 0.6);  // one Enter/Activate pulse, not a repeated hold
     CHECK((rig.pilot.mode() == PilotMode::Autopilot));
     CHECK(rig.frontX() >= 340.0);
 }

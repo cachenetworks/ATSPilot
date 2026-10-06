@@ -25,7 +25,7 @@ enum class PilotEvent { Engaged, Disengaged, DriverOverride, Unavailable, Emerge
                         WaitingAtIntersection, Arrived };
 
 // Orchestrates planning outputs, controllers and safety for one truck. Free of
-// any SDK dependency so the same code runs inside ATS and in the simulator.
+// any SDK dependency so the same code runs inside either supported game and in the simulator.
 //
 // Per frame:  VehicleState ─▶ safety checks ─▶ steering + speed plan ─▶ ControlCommand
 //
@@ -134,6 +134,9 @@ private:
     double maxWheelAngle_ = 0.6;
     int invertedSteeringFrames_ = 0;
     double lastCrossTrackWarn_ = -100.0;
+    double divergenceSince_ = -1.0;
+    double divergenceStartError_ = 0.0;
+    double divergencePeakError_ = 0.0;
 
     SteeringShaper shaper_;
     LongitudinalController longitudinal_;

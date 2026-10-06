@@ -143,6 +143,23 @@ TEST_CASE("speed planner slows before a curve, not after it") {
     CHECK(inCurve.targetSpeed == Approx(vCurve).epsilon(0.08));
 }
 
+TEST_CASE("speed planner ignores a one-point curvature spike but still respects a sustained bend") {
+    SpeedPlannerParams p;
+    VehicleLoadFactors f;
+    const double cruise = 29.0;
+
+    Path noisy;
+    for (int x = 0; x <= 500; x += 5) {
+        noisy.append({static_cast<double>(x), x == 250 ? 2.5 : 0.0});
+    }
+    const SpeedPlan spike = planSpeed(p, f, noisy, 100.0, cruise);
+    CHECK(spike.targetSpeed > 26.0);
+
+    const Path bend = sim::makeArc(250.0, 60.0, degToRad(90.0), 250.0, 2.0);
+    const SpeedPlan realCurve = planSpeed(p, f, bend, 180.0, cruise);
+    CHECK(realCurve.targetSpeed < cruise - 1.0);
+}
+
 TEST_CASE("speed planner treats the end of known path as a stop") {
     SpeedPlannerParams p;
     VehicleLoadFactors f;

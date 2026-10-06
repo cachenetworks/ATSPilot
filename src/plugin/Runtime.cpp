@@ -3,11 +3,14 @@
 #include <windows.h>
 #include <mmsystem.h>
 #include <shlobj.h>
+#include <winver.h>
 
 #include <cmath>
 #include <fstream>
 #include <sstream>
+#include <vector>
 
+#include "game/Game.h"
 #include "math/MathUtil.h"
 
 namespace atspilot::plugin {
@@ -32,6 +35,37 @@ std::filesystem::path thisModuleDir() {
     wchar_t buf[MAX_PATH * 2] = {};
     GetModuleFileNameW(module, buf, static_cast<DWORD>(std::size(buf)));
     return std::filesystem::path(buf).parent_path();
+}
+
+std::filesystem::path processExecutable() {
+    wchar_t buf[MAX_PATH * 2] = {};
+    GetModuleFileNameW(nullptr, buf, static_cast<DWORD>(std::size(buf)));
+    return std::filesystem::path(buf);
+}
+
+GameKind detectGameKind() {
+    wchar_t overrideGame[64] = {};
+    if (GetEnvironmentVariableW(L"ATSPILOT_GAME", overrideGame, static_cast<DWORD>(std::size(overrideGame))) > 0) {
+        return gameKindFromSelector(std::filesystem::path(overrideGame).string());
+    }
+    return gameKindFromExecutable(processExecutable());
+}
+
+std::string processVersion() {
+    const std::wstring exe = processExecutable().wstring();
+    DWORD ignored = 0;
+    const DWORD size = GetFileVersionInfoSizeW(exe.c_str(), &ignored);
+    if (!size) return {};
+    std::vector<unsigned char> data(size);
+    if (!GetFileVersionInfoW(exe.c_str(), 0, size, data.data())) return {};
+    VS_FIXEDFILEINFO* info = nullptr;
+    UINT infoSize = 0;
+    if (!VerQueryValueW(data.data(), L"\\", reinterpret_cast<void**>(&info), &infoSize) || !info ||
+        infoSize < sizeof(VS_FIXEDFILEINFO)) {
+        return {};
+    }
+    return std::to_string(HIWORD(info->dwFileVersionMS)) + "." + std::to_string(LOWORD(info->dwFileVersionMS)) + "." +
+           std::to_string(HIWORD(info->dwFileVersionLS)) + "." + std::to_string(LOWORD(info->dwFileVersionLS));
 }
 
 bool gameHasFocus() {
@@ -123,12 +157,16 @@ void Runtime::loadConfiguration() {
 }
 
 void Runtime::initialise() {
+    gameKind_ = detectGameKind();
+    const GameKind effectiveKind = gameKind_ == GameKind::Unknown ? GameKind::Ats : gameKind_;
+    const auto& game = gameDefinition(effectiveKind);
+
     // ATSPILOT_DATA_DIR redirects all files; used by the plugin host test harness.
     wchar_t overrideDir[MAX_PATH] = {};
     if (GetEnvironmentVariableW(L"ATSPILOT_DATA_DIR", overrideDir, MAX_PATH) > 0) {
         paths_.dataDir = overrideDir;
     } else {
-        paths_.dataDir = documentsDir() / "American Truck Simulator" / "atspilot";
+        paths_.dataDir = documentsDir() / game.documentsDirectory / "atspilot";
     }
     paths_.configFile = paths_.dataDir / "atspilot.toml";
     paths_.logFile = paths_.dataDir / "logs" / "atspilot.log";
@@ -158,7 +196,7 @@ void Runtime::initialise() {
     lo2.maxFiles = config_.debug.logFiles;
     log_.start(lo2);
 
-    log_.info("ATSPilot {} plugin initialized (data: {})", "0.3.0", paths_.dataDir.string());
+    log_.info("ATSPilot {} plugin initialized for {} (data: {})", "0.3.0", game.displayName, paths_.dataDir.string());
 
     // <game>/bin/win_x64/plugins/atspilot.dll -> <game>
     paths_.gameDir = config_.map.gameDir.empty() ? thisModuleDir().parent_path().parent_path().parent_path()
@@ -170,7 +208,7 @@ void Runtime::initialise() {
     if (config_.map.enabled) {
         if (std::filesystem::exists(paths_.gameDir / "base_map.scs", ec)) {
             map_ = std::make_unique<MapService>(log_, config_);
-            map_->start(paths_.gameDir, paths_.cacheDir);
+            map_->start(paths_.gameDir, paths_.cacheDir, game.mapName, game.cacheFile);
         } else {
             log_.error("Game data not found in '{}'; set map.game_dir. Steering modes unavailable.",
                        paths_.gameDir.string());
@@ -203,13 +241,23 @@ void Runtime::flushGameLog() {
 void Runtime::setTelemetryActive(bool active) {
     telemetryActive_ = active;
     if (!active && pilot_) pilot_->disengage("Telemetry Unavailable");
-    log_.info("ATS telemetry {}", active ? "connected" : "disconnected");
+    log_.info("SCS telemetry {}", active ? "connected" : "disconnected");
 }
 
-void Runtime::setGameName(const std::string& name) {
+void Runtime::setGameIdentity(const std::string& id, const std::string& name) {
+    (void)name;
+    const GameKind reported = gameKindFromId(id);
+    if (reported != GameKind::Unknown) {
+        if (gameKind_ == GameKind::Unknown) {
+            gameKind_ = reported;
+        } else if (reported != gameKind_) {
+            log_.error("Game identity mismatch: process looks like {}, telemetry reports {}", gameDefinition(gameKind_).displayName,
+                       gameDefinition(reported).displayName);
+        }
+    }
     if (!config_.memory.enabled || memory_) return;
     memory_ = std::make_unique<GameMemory>(log_, config_.memory);
-    memory_->start(name);
+    memory_->start(processVersion());
 }
 
 void Runtime::updateFromGameMemory() {

@@ -1,5 +1,5 @@
 // Input API integration: a "semantical" SDK input device (scssdk_input_device.h).
-// Its inputs feed ATS mixes of the same name directly, which controls.sii
+// Its inputs feed ATS/ETS2 mixes of the same name directly, which controls.sii
 // combines with the player's own devices:
 //
 //   mix steering     `... - semantical.steering?0`
@@ -17,9 +17,14 @@
 
 #include <cmath>
 #include <cstring>
+#include <string>
 
 #include "Runtime.h"
+#include "amtrucks/scssdk_ats.h"
 #include "amtrucks/scssdk_input_ats.h"
+#include "eurotrucks2/scssdk_eut2.h"
+#include "eurotrucks2/scssdk_input_eut2.h"
+#include "game/Game.h"
 #include "scssdk_input.h"
 
 using namespace atspilot;
@@ -128,6 +133,23 @@ extern "C" SCSAPI_RESULT scs_input_init(const scs_u32_t version, const scs_input
         for (auto& v : g_target) v = 0.0f;
         Runtime& rt = Runtime::acquire(p->common.log);
         g_inputAcquired = true;
+        const std::string gameId = p->common.game_id ? p->common.game_id : "";
+        const GameKind gameKind = gameKindFromId(gameId);
+        if (gameKind == GameKind::Unknown) {
+            rt.log().error("Unsupported SCS game id '{}'", gameId);
+            g_inputAcquired = false;
+            Runtime::release();
+            return SCS_RESULT_unsupported;
+        }
+        rt.setGameIdentity(gameId, p->common.game_name ? p->common.game_name : "");
+        const scs_u32_t expectedGameVersion =
+            gameKind == GameKind::Ats ? SCS_INPUT_ATS_GAME_VERSION_CURRENT : SCS_INPUT_EUT2_GAME_VERSION_CURRENT;
+        if (p->common.game_version != expectedGameVersion) {
+            rt.log().warn("Unexpected {} input version {}.{} (SDK headers expect {}.{})",
+                          gameDefinition(gameKind).displayName, SCS_GET_MAJOR_VERSION(p->common.game_version),
+                          SCS_GET_MINOR_VERSION(p->common.game_version), SCS_GET_MAJOR_VERSION(expectedGameVersion),
+                          SCS_GET_MINOR_VERSION(expectedGameVersion));
+        }
         scs_input_device_t device;
         std::memset(&device, 0, sizeof(device));
         device.name = "atspilot";

@@ -14,4 +14,4 @@ add_library(atspilot_plugin SHARED
 
 set_target_properties(atspilot_plugin PROPERTIES OUTPUT_NAME atspilot)
 target_include_directories(atspilot_plugin PRIVATE ${SCS_SDK_INCLUDE})
-target_link_libraries(atspilot_plugin PRIVATE atspilot_core ets2la_prism shell32 ole32 winmm user32 gdi32)
+target_link_libraries(atspilot_plugin PRIVATE atspilot_core ets2la_prism shell32 ole32 winmm user32 gdi32 version)

@@ -1,13 +1,13 @@
 # Map parsing
 
 ATSPilot builds a lane-level road graph from the same files the game loads.
-Everything here was checked against ATS 1.61 data. `atspilot_mapdump build`
-reproduces the numbers below.
+The parser is validated against ATS 1.61.3.1 and ETS2 1.61.1.1 data.
+`atspilot_mapdump build` reproduces the statistics below for the selected game.
 
 ## Archives (HashFS)
 
 The `.scs` files in the game folder are HashFS archives (`SCS#` magic,
-`CITY` hash method). ATS 1.61 ships **version 2**. Version 1 is also supported
+`CITY` hash method). The tested ATS/ETS2 1.61 builds ship **version 2**. Version 1 is also supported
 (mods).
 
 v2 header (little-endian):
@@ -110,9 +110,16 @@ in the ground plane, then translate. All 1,737 descriptors used by the map parse
    junction curves that begin past the node, or to the nearest aligned start
    within 5 m (a merge or lane drop). The path builder turns any lateral gap
    at a join into a smooth 60 m transition.
-6. **Snapping:** for regular joins only (≤ 1.6 m), the remaining offset
-   between a road lane end and its junction curve is spread along the road
-   lane. Blend factors are taken from the unmodified geometry. An earlier
+6. **Snapping and road-template seams:** regular road/junction joins (≤ 1.6 m)
+   are still snapped to the authored junction geometry. In addition, a
+   road-to-road continuation with the same lane count is treated as a template
+   seam when the road looks position the carriageway several metres differently
+   around the shared node. Matching lanes are re-linked by their logical lane
+   index, both road lanes meet at the midpoint, and the half-correction is
+   blended through each road item. This prevents a road-look offset change from
+   becoming a false 60 m lane-change manoeuvre. Actual lane-count changes and
+   branches keep their merge geometry. Blend
+   factors are taken from the unmodified geometry. An earlier
    version measured them on already-shifted points, which made geometry on
    very short roads grow exponentially. The builder now also drops any
    segment with non-finite or out-of-map coordinates (0 on 1.61).
@@ -151,7 +158,8 @@ beside it) for 1 s.
 
 ## Cache
 
-The graph is saved to `cache/map_usa.cache` (binary, format version 1)
+The graph is saved to `cache/map_usa.cache` for ATS or `cache/map_europe.cache`
+for ETS2 (binary, format version 7)
 together with a fingerprint of every archive's name, size and timestamp and the
 lane width. A game update, DLC change or new ATSPilot cache format forces a
 rebuild (about 15 s on an i7-9700K) on the background thread.

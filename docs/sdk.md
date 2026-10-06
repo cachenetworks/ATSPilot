@@ -2,18 +2,20 @@
 
 All statements below were checked against the **SCS SDK 1.15** headers
 (`external/scs_sdk_1_15/include`) and, where the headers say nothing, against
-the game data and profile files of ATS 1.61. When this document and the headers
+the game data and profile files of ATS 1.61. ATS and ETS2 use the same common
+telemetry/input contracts here; game-specific SDK version constants are selected
+from the reported game id. When this document and the headers
 disagree, the headers win.
 
 ## Plugin loading
 
-- The game loads every DLL in `<ATS>\bin\win_x64\plugins\`
+- The game loads every DLL in `<game>\bin\win_x64\plugins\`
   (SDK `readme.txt`). It may run several init/shutdown cycles per process
   (`sdk reinit`, `sdk reload`). ATSPilot keeps one `Runtime` with a reference
   count shared by the telemetry and input APIs, and supports repeated cycles.
 - Exports: `scs_telemetry_init`, `scs_telemetry_shutdown`, `scs_input_init`,
   `scs_input_shutdown` (plus two `atspilot_dev_*` functions used only by the
-  test harness, which ATS ignores).
+  test harness, which the games ignore).
 - All SDK callbacks arrive on the game's main thread, and calls back into the
   SDK are only allowed from there (`readme.txt`, "Calling conventions and
   threading"). Game-console logging is therefore queued and flushed from
@@ -61,7 +63,7 @@ awareness needs an optional perception module (see the roadmap).
 controls.sii references something like `semantical.<mixname>?0`, then semantical
 input is likely supported for that mix."
 
-The relevant mixes from an ATS 1.61 profile's `controls.sii`:
+The relevant mixes from a tested ATS 1.61 profile's `controls.sii`:
 
 ```
 mix steering  `dsteering - memory(j_steer_c?1, …) - semantical.steering?0`
@@ -100,11 +102,10 @@ No binding UI and no mod are needed. The trade-off, as the header notes, is
 that a future change to these mixes would need a plugin update.
 
 ### Finding: default key conflicts
-In a stock 1.61 profile, `F10` is bound to screenshot, `F11` to radio and the
-bug reporter, and `Ctrl+F9` to teleport. ATSPilot's defaults avoid these:
-`F9`, `F8`, `Insert`, `=`, `-`, `Delete`, `Shift+F9` and `Shift+Delete` are
-unbound (or modifier-distinct) in that profile. Hotkeys are read with
-`GetAsyncKeyState` only while the ATS window has focus, with exact modifier
+In the tested stock ATS 1.61 profile, `F10` is bound to screenshot, `F11` to
+radio and the bug reporter, and `Ctrl+F9` to teleport. ATSPilot's default `F9`
+binding is modifier-distinct from `Ctrl+F9`. Hotkeys are read with
+`GetAsyncKeyState` only while the game window has focus, with exact modifier
 matching.
 
 ## Coordinate systems
@@ -125,6 +126,7 @@ example's rotation.
 
 ## Version handling
 
-`scs_telemetry_init` accepts API 1.00/1.01 and logs the game's telemetry
-version, warning on an unexpected major version. Map formats are
+`scs_telemetry_init` accepts API 1.00/1.01 and selects the ATS or ETS2 telemetry
+game version from `game_id` (`ats` or `eut2`). `scs_input_init` does the same
+for input 1.00. Unexpected per-game versions are logged. Map formats are
 version-checked separately (see map-parsing.md).
