@@ -79,7 +79,7 @@ struct IntersectionConfig {
 struct ServicesConfig {
     bool refuel = true;             // drive to a fuel station and refuel when low
     double refuelBelow = 0.25;      // fraction of the tank
-    bool weighStations = true;      // pull into weigh stations on the route
+    bool weighStations = false;     // opt-in: game telemetry does not expose a weigh request
 };
 
 // Reading and writing the game's own memory for what the SDK does not expose.

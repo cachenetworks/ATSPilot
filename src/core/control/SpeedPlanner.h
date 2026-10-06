@@ -7,7 +7,7 @@
 namespace atspilot {
 
 struct SpeedPlannerParams {
-    double maxLateralAccel = 1.6;      // m/s^2 for a bobtail on dry road; deliberately conservative
+    double maxLateralAccel = 1.9;      // m/s^2 for a bobtail on dry road; reduced for trailers/load/rain
     double comfortDecel = 1.2;         // m/s^2 used to slow ahead of curves
     double limitDecel = 0.7;           // m/s^2 when the speed limit or maximum drops
     double minCurveSpeed = 4.0;        // m/s floor so very tight geometry still makes progress

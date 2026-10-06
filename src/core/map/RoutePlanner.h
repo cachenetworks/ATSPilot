@@ -40,7 +40,7 @@ struct Route {
 // lane boundary and settle before the source segment ends. Routes that discover
 // a change later than this should miss the turn and recalculate instead of
 // forcing a sideways correction beside the truck.
-inline constexpr double kMinLaneChangeRoom = 80.0;
+inline constexpr double kMinLaneChangeRoom = 60.0;
 
 // The in-game GPS route as a polyline (plan coordinates, truck to destination),
 // with a grid index for distance queries.
@@ -72,8 +72,8 @@ struct RouteOptions {
     // times their length, so the search follows the game's own route. Costs only
     // ever grow, so the straight-line heuristic stays admissible.
     std::shared_ptr<const GpsCorridor> corridor;
-    double corridorWidth = 30.0;       // m from the GPS polyline still counted as on it
-    double offCorridorFactor = 10.0;
+    double corridorWidth = 18.0;       // m from the GPS polyline still counted as on it
+    double offCorridorFactor = 30.0;
 };
 
 // A* over the lane graph from (startSegment, startS) to any of `goals`.

@@ -42,11 +42,14 @@ struct WorldLight {
     double yaw = 0.0;  // direction the light's model faces, plan frame
     LightState state = LightState::Unknown;
     double timeRemaining = 0.0;  // s in the current state
+    bool temporary = false;      // roadwork/event light rather than a static junction signal
 };
 
 struct WorldSnapshot {
     double time = 0.0;  // simulation time it was taken at
     bool valid = false;
+    bool trafficValid = false;
+    bool lightsValid = false;
     std::vector<WorldVehicle> vehicles;
     std::vector<WorldLight> lights;
 };

@@ -294,6 +294,7 @@ void collectLights(const Vec2& truck, double radius, std::vector<WorldLight>& ou
             l.yaw = std::atan2(-static_cast<double>(forward.z), static_cast<double>(forward.x));
             l.state = lightState(rule->state);
             l.timeRemaining = rule->state_time_remaining;
+            l.temporary = ruleType == prism::ETrafficObjectType::traffic_light_roadwork;
             out.push_back(l);
         }
     }
@@ -405,7 +406,7 @@ WorldSnapshotPtr GameMemory::readWorld(double time, const Vec3& truckWorld, doub
         snap->vehicles.reserve(256);
         auto read = [&] { collectTraffic(truck, radius, snap->vehicles); };
         if (guarded(read)) {
-            snap->valid = true;
+            snap->trafficValid = true;
         } else {
             snap->vehicles.clear();
             fault("traffic", trafficOk_);
@@ -414,11 +415,14 @@ WorldSnapshotPtr GameMemory::readWorld(double time, const Vec3& truckWorld, doub
     if (cfg_.trafficLights && lightsOk_) {
         snap->lights.reserve(64);
         auto read = [&] { collectLights(truck, radius, snap->lights); };
-        if (!guarded(read)) {
+        if (guarded(read)) {
+            snap->lightsValid = true;
+        } else {
             snap->lights.clear();
             fault("traffic lights", lightsOk_);
         }
     }
+    snap->valid = snap->trafficValid || snap->lightsValid;
     return snap;
 }
 

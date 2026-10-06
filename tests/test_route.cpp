@@ -157,6 +157,14 @@ TEST_CASE("route search refuses a lane change discovered too late") {
     CHECK_FALSE(r.failure.empty());
 }
 
+TEST_CASE("route search can still merge out with about sixty metres of lane remaining") {
+    Grid g;
+    const Route r = planRoute(g.net, g.inner, 135.0, {g.depot});
+    REQUIRE(r.found);
+    REQUIRE(r.steps.size() >= 2);
+    CHECK(r.steps[1].laneChange);
+}
+
 TEST_CASE("route search does not stack two lane changes at one longitudinal position") {
     RoadNetwork net;
     const auto inner = net.add(lane({0, 0}, {200, 0}, 1, 0));

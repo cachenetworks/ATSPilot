@@ -65,6 +65,16 @@ TEST_CASE("crossing traffic is a conflict only when the truck would meet it") {
     CHECK(assessTraffic(path, 10.0, 20.0, {car(60.0, -20.0, 0.5 * kPi, 0.0)}, p).constraints.empty());
 }
 
+TEST_CASE("moving cross traffic already in a distant intersection is timed, not treated as a stopped lead") {
+    const Path path = sim::makeStraight(500.0);
+    const TrafficParams p;
+    // This vehicle is physically over the path now, but will be long gone before
+    // the truck can cover the 140 m to the intersection.
+    const auto pic = assessTraffic(path, 10.0, 20.0, {car(150.0, 0.0, 0.5 * kPi, 15.0)}, p);
+    CHECK(pic.constraints.empty());
+    CHECK_FALSE(pic.nearest);
+}
+
 TEST_CASE("traffic on a bridge over the path or a road under it is ignored") {
     Path path;
     for (int i = 0; i <= 100; ++i) path.append({i * 5.0, 0.0}, 0.0, 0, 100.0 + 0.02 * i * 5.0);  // 2% climb
@@ -212,6 +222,33 @@ TEST_CASE("the autopilot stops on red and goes on green without a throttle tap")
     for (int k = 0; k < 60 * 15; ++k) rig.step();
     CHECK((rig.pilot.mode() == PilotMode::Autopilot));
     CHECK(rig.frontX() > 215.0);
+}
+
+TEST_CASE("a temporary roadwork red light stops the truck without a static map stop") {
+    TrafficRig rig;
+    rig.world->trafficValid = true;
+    rig.world->lightsValid = true;
+    rig.world->lights = {{-1, {200.0, 0.0}, 0.0, LightState::Red, 20.0, true}};
+    for (int k = 0; k < 60 * 40; ++k) rig.step();
+    CHECK(rig.vehicle.speed() < 0.3);
+    CHECK(rig.frontX() < 200.0);
+
+    rig.world->lights[0].state = LightState::Green;
+    for (int k = 0; k < 60 * 15; ++k) rig.step();
+    CHECK(rig.frontX() > 215.0);
+}
+
+TEST_CASE("a clear yield junction does not force the truck down to yield speed") {
+    TrafficRig rig;
+    rig.world->trafficValid = true;
+    rig.snap->stops = {{250.0, StopKind::Yield, 11}};
+    double minNear = 1e9;
+    for (int k = 0; k < 60 * 25; ++k) {
+        rig.step();
+        const double x = rig.vehicle.rearAxle().x;
+        if (x > 225.0 && x < 250.0) minNear = std::min(minNear, rig.vehicle.speed());
+    }
+    CHECK(minNear > 8.0);
 }
 
 TEST_CASE("a signal whose light cannot be read is an all-way stop, not a wait for the driver") {

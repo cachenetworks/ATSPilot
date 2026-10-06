@@ -480,16 +480,34 @@ GameButtons Autopilot::blinkers(const VehicleState& s, const PathSnapshotPtr& pa
     if (path && hintPath_ == path) {
         // The truck's front on the path: the signal is on within an indication's interval.
         const double frontS = debug_.pathS + frontS_;
+        const Indication* chosen = nullptr;
+        auto priority = [](IndicationKind kind) {
+            switch (kind) {
+                case IndicationKind::LaneChange: return 4;
+                case IndicationKind::Turn: return 3;
+                case IndicationKind::Exit: return 2;
+                case IndicationKind::Merge: return 1;
+            }
+            return 0;
+        };
         for (const auto& ind : path->indications) {
             if (ind.sStart > frontS) break;
             if (frontS <= ind.sEnd) {
-                wantLeft = ind.side > 0;
-                wantRight = ind.side < 0;
-                if (ind.sStart != activeIndication_) {
-                    activeIndication_ = ind.sStart;
-                    if (log_) log_->debug("Signalling {} for {}", ind.side > 0 ? "left" : "right", toString(ind.kind));
+                if (!chosen || priority(ind.kind) > priority(chosen->kind) ||
+                    (priority(ind.kind) == priority(chosen->kind) && ind.sStart > chosen->sStart)) {
+                    chosen = &ind;
                 }
-                break;
+            }
+        }
+        if (chosen) {
+            wantLeft = chosen->side > 0;
+            wantRight = chosen->side < 0;
+            if (chosen->sStart != activeIndication_) {
+                activeIndication_ = chosen->sStart;
+                if (log_) {
+                    log_->debug("Signalling {} for {}", chosen->side > 0 ? "left" : "right",
+                                toString(chosen->kind));
+                }
             }
         }
     }
@@ -568,7 +586,8 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
     status_.gameCruiseActive = s.cruiseControlSpeed > 0.1;
     status_.cruiseSetSpeed = s.cruiseControlSpeed;
     status_.waitingAtIntersection = waitingStop_.has_value();
-    status_.trafficAware = world_ && world_->valid;
+    const bool legacyWorld = world_ && world_->valid && !world_->trafficValid && !world_->lightsValid;
+    status_.trafficAware = world_ && (world_->trafficValid || legacyWorld);
     frontS_ = frontFromRear(vc);
     status_.directSteering = directSteering_;
     if (path) {
@@ -786,16 +805,17 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
         double strongBrake = 0.0;
         status_.leadDistance = -1.0;
         status_.signalState.clear();
-        const bool aware = world_ && world_->valid;  // live traffic and light states available
+        const bool trafficAware = world_ && (world_->trafficValid || legacyWorld);
+        const bool lightsAware = world_ && (world_->lightsValid || legacyWorld);
         if (lat && path) {
             const double toFront = frontFromRear(vc);
             const double frontS = lat->pathS + toFront;
-            const double front = toFront + eff_.intersections.stopLineMargin;
+            const double signalMargin = eff_.intersections.stopLineMargin + 1.5;
 
             // Traffic on, or about to cross, the path. Constraints are produced at
             // the truck's front and moved to the rear axle the planner works with.
             TrafficPicture traffic;
-            if (aware && !world_->vehicles.empty()) {
+            if (trafficAware && !world_->vehicles.empty()) {
                 traffic = assessTraffic(path->path, frontS, std::max(0.0, s.speed), world_->vehicles, eff_.traffic);
                 for (auto c : traffic.constraints) {
                     c.s -= toFront;
@@ -829,9 +849,30 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
             // Pulling into the lane: slowly, and only when nothing is coming up behind in it.
             if (joinAllowance_ > 0.0) {
                 target = std::min(target, 8.0);
-                if (aware && laneTrafficBehind(path->path, lat->pathS, world_->vehicles)) {
+                if (trafficAware && laneTrafficBehind(path->path, lat->pathS, world_->vehicles)) {
                     target = 0.0;
                     setMessage("Waiting for traffic to pass");
+                }
+            }
+
+            // Temporary roadwork/event lights are not part of the static map's
+            // stop-line rules. Project live roadwork signals onto the current path
+            // so a temporary red can stop the truck even on an otherwise open road.
+            if (lightsAware) {
+                for (const auto& light : world_->lights) {
+                    if (!light.temporary) continue;
+                    const auto pr = path->path.project(light.position);
+                    if (!pr || pr->s <= frontS || pr->s - frontS > eff_.traffic.horizon) continue;
+                    if (std::abs(pr->crossTrackError) > 8.0) continue;
+                    if (std::abs(std::cos(headingDifference(pr->yaw, light.yaw))) < 0.7) continue;
+                    const double distance = pr->s - signalMargin - frontS;
+                    const SignalDecision d =
+                        decideSignal(light.state, distance, std::max(0.0, s.speed), eff_.traffic);
+                    if (d == SignalDecision::Stop) {
+                        constraints.push_back({pr->s - toFront - signalMargin, 0.0});
+                    } else if (d == SignalDecision::GiveWay) {
+                        constraints.push_back({pr->s - toFront, eff_.intersections.yieldSpeed});
+                    }
                 }
             }
 
@@ -848,7 +889,10 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
                 const bool cleared = std::find(clearedStops_.begin(), clearedStops_.end(), stop.segment) !=
                                      clearedStops_.end();
                 if (cleared) continue;
-                const double distance = stop.s - eff_.intersections.stopLineMargin - frontS;
+                const double stopMargin =
+                    stop.kind == StopKind::Signal ? signalMargin : eff_.intersections.stopLineMargin;
+                const double front = toFront + stopMargin;
+                const double distance = stop.s - stopMargin - frontS;
 
                 // Without live states: stop and wait for the driver's throttle tap.
                 auto waitForTap = [&] {
@@ -880,7 +924,7 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
                 };
 
                 if (stop.kind == StopKind::Signal && eff_.intersections.stopAtSignals) {
-                    if (!aware) {
+                    if (!lightsAware) {
                         waitForTap();
                         continue;
                     }
@@ -926,11 +970,16 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
                         constraints.push_back({stop.s - front, 0.0});
                         continue;
                     }
-                    stopAndGo("traffic light (state unknown)");
+                    if (trafficAware) stopAndGo("traffic light (state unknown)");
+                    else waitForTap();
                 } else if (stop.kind == StopKind::StopSign && eff_.intersections.stopAtStopSigns) {
-                    if (!aware) waitForTap();
+                    if (!trafficAware) waitForTap();
                     else stopAndGo("stop sign");
-                } else if (stop.kind == StopKind::Yield || stop.kind == StopKind::RailCrossing) {
+                } else if (stop.kind == StopKind::Yield) {
+                    if (!trafficAware || junctionBusy) {
+                        constraints.push_back({stop.s - toFront, eff_.intersections.yieldSpeed});
+                    }
+                } else if (stop.kind == StopKind::RailCrossing) {
                     constraints.push_back({stop.s - toFront, eff_.intersections.yieldSpeed});
                 }
             }
@@ -999,10 +1048,11 @@ ControlCommand Autopilot::update(const VehicleState& s, const VehicleConfig& vc,
                 }
             }
             if (out.cancelledExternally) {
-                // The game switched its cruise control off on its own (driver input,
-                // emergency brake assist): the driver must take over.
-                disengage("Cruise control cancelled - take over", PilotEvent::DriverOverride);
-                return last_;
+                // Cruise can be cancelled by the game's own safety systems. Driver
+                // input is detected independently above, so keep control on the
+                // pedals and let the cruise manager re-acquire when it is safe.
+                if (log_) log_->info("Game cruise control cancelled; continuing on ATSPilot pedals");
+                setMessage("Cruise cancelled - using pedals");
             }
             cmd.buttons.merge(out.buttons);
             ownPedals = out.ownPedals;

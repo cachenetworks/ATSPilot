@@ -207,10 +207,10 @@ std::optional<LaneChangeWindow> laneChangeWindow(const LaneSegment& from, const 
     earliest = clamp(earliest, 0.0, length);
     if (length - earliest < kMinLaneChangeRoom) return std::nullopt;
 
-    constexpr double kLead = 12.0;
-    constexpr double kEndMargin = 12.0;
-    constexpr double kMinBlend = 55.0;
-    constexpr double kMaxBlend = 120.0;
+    constexpr double kLead = 8.0;
+    constexpr double kEndMargin = 8.0;
+    constexpr double kMinBlend = 40.0;
+    constexpr double kMaxBlend = 110.0;
     const double end = length - kEndMargin;
     const double preferredBlend = clamp(length * 0.60, kMinBlend, kMaxBlend);
     const double start = std::max(end - preferredBlend, earliest + kLead);

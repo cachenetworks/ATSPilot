@@ -335,7 +335,7 @@ right_on_red = true         # turn right on red after a full stop, when no traff
 [services]
 refuel = true               # drive to a fuel station and refuel when the tank runs low
 refuel_below = 0.25         # fraction of the tank that counts as low
-weigh_stations = true       # pull into weigh stations on the route and stop on the scale
+weigh_stations = false      # opt-in; telemetry does not say when this truck is required to weigh
 
 [steering]
 controller = "pure_pursuit" # "pure_pursuit" or "stanley"
@@ -368,7 +368,7 @@ max_strong_brake = 0.75
 emergency_brake = 0.85
 
 [planner]
-max_lateral_accel = 1.6     # m/s^2 in curves for a bobtail on a dry road
+max_lateral_accel = 1.9     # m/s^2 in curves for a bobtail on a dry road
 comfort_decel = 1.2         # m/s^2 used to slow down before curves and stops
 limit_decel = 0.7           # m/s^2 when the speed limit or your maximum drops
 min_curve_speed_mps = 4.0

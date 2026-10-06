@@ -10,9 +10,9 @@ namespace atspilot {
 
 struct ServicePlanOptions {
     bool fuel = false;               // route via a fuel pump first
-    bool weigh = true;               // pull into weigh stations along the route
-    double fuelSearchRadius = 15000.0;  // m (straight line) a pump may be from the truck
-    double fuelMaxDistance = 25000.0;   // m of driving to the pump at most
+    bool weigh = false;              // opt-in: the SDK does not report whether this truck must weigh
+    double fuelSearchRadius = 25000.0;  // m (straight line) a pump may be from the truck
+    double fuelMaxDistance = 40000.0;   // m of driving to the pump at most
     double weighCatchment = 150.0;   // m from the route a weigh station scale may be
     double weighMaxDetour = 3000.0;  // m a weigh station may add to the route
     double minLead = 250.0;          // m of route needed to still reach a weigh station's ramp

@@ -142,18 +142,20 @@ TEST_CASE("ATSPilot lowers the cruise set speed for a sharp curve and restores i
         if (rig.vehicle.cruiseSet() > 0.0) minSet = std::min(minSet, rig.vehicle.cruiseSet());
     }
     CHECK((rig.pilot.mode() == PilotMode::Autopilot));
-    CHECK(minSet < 15.0);  // curve speed for R = 120 m is about 13.9 m/s
+    CHECK(minSet < 16.5);  // curve speed for R = 120 m is about 15.1 m/s
 }
 
-TEST_CASE("the game cancelling its cruise control on its own hands control back") {
+TEST_CASE("the game cancelling its cruise control falls back to ATSPilot pedals") {
     Rig rig;
     rig.toggle();
     for (int k = 0; k < 120; ++k) rig.step();
     REQUIRE(rig.vehicle.cruiseSet() > 0.0);
     rig.vehicle.cancelCruise();  // e.g. emergency brake assist
     rig.step();
-    CHECK((rig.pilot.mode() == PilotMode::Off));
-    CHECK(rig.pilot.status().statusMessage == "Cruise control cancelled - take over");
+    CHECK((rig.pilot.mode() == PilotMode::Autopilot));
+    CHECK(rig.pilot.status().statusMessage == "Cruise cancelled - using pedals");
+    for (int k = 0; k < 120; ++k) rig.step();
+    CHECK((rig.pilot.mode() == PilotMode::Autopilot));
 }
 
 TEST_CASE("without the game's cruise control ATSPilot drives the pedals itself") {
@@ -383,6 +385,19 @@ TEST_CASE("blinkers are switched on before a manoeuvre and off afterwards") {
     CHECK_FALSE(rig.vehicle.blinkerLeft());
     for (int k = 0; k < 60 * 12; ++k) rig.step();
     CHECK(rig.vehicle.blinkerLeft());
+}
+
+TEST_CASE("a lane change signal wins over an overlapping merge indication") {
+    Rig rig;
+    auto snap = std::make_shared<PathSnapshot>();
+    snap->path = sim::makeStraight(1000.0);
+    snap->indications = {{0.0, 180.0, 1, IndicationKind::Merge},
+                         {0.0, 100.0, -1, IndicationKind::LaneChange}};
+    rig.path = snap;
+    rig.toggle();
+    for (int k = 0; k < 60; ++k) rig.step();
+    CHECK(rig.vehicle.blinkerRight());
+    CHECK_FALSE(rig.vehicle.blinkerLeft());
 }
 
 TEST_CASE("arriving at the destination entrance ends the drive and asks the game to park") {

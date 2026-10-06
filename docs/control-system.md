@@ -49,7 +49,7 @@ v_allowed  = min over s of sqrt(v_curve(s)² + 2·a_comfort·(s − s₀))
 ```
 
 The end of known path counts as a stop line, so the truck never runs past known
-geometry at speed. `a_lat` starts at 1.6 m/s² and is multiplied by
+geometry at speed. `a_lat` starts at 1.9 m/s² and is multiplied by
 `aggressiveness` and derated:
 
 - ×0.85 per trailer
@@ -164,7 +164,9 @@ The map builder reads prefab spawn points: type 3 is a fuel pump stand and type
 it, and stored in the map cache (format 6). `planRouteWithServices`
 (`map/ServicePlanner.cpp`) then adds stops to the route.
 
-- **Weigh stations:** the first scale beside the route ahead counts if it is
+- **Weigh stations:** disabled by default because telemetry does not expose a
+  reliable "this truck must weigh now" state. When explicitly enabled, the
+  first scale beside the route ahead counts if it is
   within 150 m, faces the same way, and is at least 250 m on. The route then
   goes truck → scale lane → destination, unless that adds more than 3 km.
   Stations already passed are skipped for 15 minutes. At the scale the truck
@@ -172,7 +174,8 @@ it, and stored in the map cache (format 6). `planRouteWithServices`
   (45 s at most).
 - **Fuel:** below `services.refuel_below` (25%), or with the dashboard
   warning, the route goes via the pump reachable along mapped lanes that is
-  nearest by driving (within 25 km), then on to the destination. At the pump
+  nearest by driving (within 25 km straight-line / 40 km driving), then on to
+  the destination. At the pump
   the truck stops with its front 3.5 m past it and holds the game's
   `activate` control. If no fuel flows within 6 s it moves 4 m forward and
   tries again, up to 3 times. It finishes when the tank is 98% full or the
@@ -229,7 +232,9 @@ traffic lights every frame. `assessTraffic` turns them into speed constraints:
   the truck aims to be at its speed `standstill_gap + time_gap · v` behind it.
 - **Crossing:** vehicles more than 30° off the path direction are extrapolated
   for up to 4 s. If one would occupy the corridor ahead about when the truck
-  gets there (within 2.5 s), it is treated as stopped at that point.
+  gets there (within 2.5 s), it is treated as stopped at that point. A moving
+  cross-traffic vehicle already over a distant intersection is still timed
+  instead of being mistaken for a stopped lead vehicle.
 - **Other levels:** a vehicle whose height is more than 3.5 m from the road
   surface at its spot on the path is on a bridge above or a road below, and is
   ignored. Road heights come from the map, so hills do not trigger this.

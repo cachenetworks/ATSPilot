@@ -102,12 +102,14 @@ TrafficPicture assessTraffic(const Path& path, double frontS, double speed, cons
         const double halfWidth = p.corridorHalfWidth;
         const double pathYaw = path.yawAt(centre->s);
         const double rel = headingDifference(pathYaw, v.yaw);
+        const double crossAngle = std::abs(std::sin(rel));
 
         // On the path now.
         const Occupancy now = occupancy(path, footprint(v.position, v.yaw, v.length, v.width), centre->index, halfWidth);
         // Ahead of the truck's front; a vehicle beside it (overlapping its length)
         // cannot be braked for and is left to the lateral clearance of the lane.
-        if (now.inCorridor && now.sMin > frontS - 0.5 && now.sMin < sEnd) {
+        if (now.inCorridor && now.sMin > frontS - 0.5 && now.sMin < sEnd &&
+            (crossAngle < 0.5 || v.speed < 1.0)) {
             PathObstacle ob;
             ob.id = v.id;
             ob.s = std::max(now.sMin, frontS);
@@ -120,7 +122,6 @@ TrafficPicture assessTraffic(const Path& path, double frontS, double speed, cons
         // the path ahead around the time the truck gets there. Vehicles moving with
         // or against the path are left to the "on the path" check above.
         if (v.speed < 1.0) continue;
-        const double crossAngle = std::abs(std::sin(rel));
         if (crossAngle < 0.5) continue;  // within 30° of parallel
         for (double t = 0.5; t <= p.predictionTime + 1e-9; t += 0.5) {
             const Vec2 c = v.position + direction(v.yaw) * (v.speed * t);

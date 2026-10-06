@@ -59,6 +59,7 @@ struct Highway {
 TEST_CASE("the route pulls into a weigh station beside the highway ahead") {
     Highway h(ServiceKind::Weigh);
     ServicePlanOptions o;
+    o.weigh = true;
     const Route r = planRouteWithServices(h.net, h.a, 20.0, {h.d}, RouteOptions{}, 0.0, 0.0, o);
     REQUIRE(r.found);
     CHECK(r.find(h.side) >= 0);
